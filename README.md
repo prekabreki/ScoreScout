@@ -42,13 +42,26 @@ pip install -r requirements.txt
 
 ## Usage
 
-**Web UI:**
+**Web UI** — the easiest way in. It's a single local page, but it drives the whole tool:
 
 ```bash
-python app.py
+./launch.sh        # macOS / Linux
+launch.bat         # Windows (or just double-click it)
+# equivalently:  python app.py
 ```
 
-Then open the URL it prints.
+This starts a local server and opens `http://localhost:5000` in your browser. From there:
+
+1. **Give it a score** — drag a file onto the **Upload File** tab (`.mscz`, `.mscx`, `.musicxml`,
+   `.mxl`), or pick one from the **My Library** tab (populated from the folders in
+   `PIANO_FORMATTER_LIBRARY_DIRS`).
+2. **Choose whether to use AI** — tick **Skip AI explanation** to stay fully offline (no
+   `ANTHROPIC_API_KEY` needed); leave it unticked for the plain-language guide.
+3. **Click Analyze.** The report appears in the page — key, chords, rhythm, structure, a 1–10
+   difficulty, and per-note annotations. **Re-analyze** forces a fresh run (bypasses the cache);
+   **Analyze All** processes every file in your library.
+4. **Download the annotated score** from the report — MusicXML always, plus PDF/PNG when MuseScore
+   is installed.
 
 **CLI:**
 
