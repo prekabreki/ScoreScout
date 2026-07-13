@@ -121,6 +121,7 @@ failing — install MuseScore 4 if you need rendered PDFs.
 - `PIANO_FORMATTER_LIBRARY_DIRS` — `os.pathsep`-separated score-library directories.
 - `PIANO_FORMATTER_EXPORT_DIR` — where annotated exports are written.
 - `ANTHROPIC_API_KEY` — enables the optional LLM guide and chord-identification pass.
+- `CLAUDE_MODEL` — overrides the Claude model used for those calls (defaults to `claude-sonnet-5`).
 
 ## Development
 
