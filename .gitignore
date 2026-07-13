@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Project-local caches and runtime artifacts
+.cache/
+analyzer_debug.log
+*.log
+
+# Local Claude settings
+.claude/settings.local.json

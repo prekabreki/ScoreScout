@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Put the repo root on sys.path so `import analyzer` etc. works under a bare
+# `pytest` invocation (CI). Without this, only `python -m pytest` works, since
+# that adds CWD to sys.path but bare `pytest` does not.
+pythonpath = ["."]

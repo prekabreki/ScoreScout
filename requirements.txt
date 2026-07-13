@@ -1,0 +1,10 @@
+# Upper bounds cap at the next major above the known-good installed set
+# (music21 10.x, anthropic 0.11x, flask 3.x, fpdf2 2.x, pypdf 6.x, pytest 9.x)
+# to guard against breaking changes while still allowing patch/minor upgrades.
+# anthropic is pre-1.0 and bumps its minor version freely, so cap the minor.
+music21>=9.1,<11
+anthropic>=0.40.0,<0.113
+flask>=3.0,<4
+fpdf2>=2.7,<3
+pypdf>=4,<7
+pytest>=8.0,<10
