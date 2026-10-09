@@ -33,6 +33,18 @@ def _pitch_classes_to_label(pcs: set[int]) -> str:
     return "[" + " ".join(names) + "]"
 
 
+def _is_verbose_interval_name(name: str) -> bool:
+    """True for music21's descriptive interval names rather than chord symbols.
+
+    `RomanNumeral.pitchedCommonName` falls back to strings like
+    "Major Sixth with octave doublings above F" when a chord cannot be named
+    as an ordinary symbol. These read as prose and pollute the unique-chords
+    list and every report that consumes it; callers should use the compact
+    Roman figure instead.
+    """
+    return " above " in name
+
+
 # ---------------------------------------------------------------------------
 # Tiered identification
 # ---------------------------------------------------------------------------
@@ -64,6 +76,10 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
             rn = roman.romanNumeralFromChord(ch, key_obj)
             if rn.figure and rn.figure != "?":
                 name = rn.pitchedCommonName or rn.figure
+                # pitchedCommonName degrades to verbose interval prose for
+                # unusual voicings; keep the compact Roman figure instead.
+                if _is_verbose_interval_name(name):
+                    name = rn.figure
                 return name, rn.figure, "roman"
         except Exception:
             pass
@@ -275,8 +291,13 @@ def analyze_chords(score: Score, key_info: dict, use_llm: bool = True) -> dict:
                 tier_counts["fallback"] += 1
 
     # Summary stats — exclude Tier-5 bracket placeholders (e.g. "[C E G#]"),
-    # which are pitch-class labels for unidentified chords, not real chord names.
-    named_chords = [n for n in chord_names if n and not n.startswith("[")]
+    # which are pitch-class labels for unidentified chords, not real chord names,
+    # and any residual verbose interval prose (e.g. "Perfect Octave above D").
+    named_chords = [
+        n
+        for n in chord_names
+        if n and not n.startswith("[") and not _is_verbose_interval_name(n)
+    ]
     counter = Counter(named_chords)
     most_common = [{"name": n, "count": c} for n, c in counter.most_common(15)]
     unique = sorted(set(named_chords))
