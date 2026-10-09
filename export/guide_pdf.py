@@ -216,7 +216,7 @@ def render_chord_guide_pdf(chord_info: dict, output_path: str,
                             key_info: dict | None = None,
                             title: str = "Chord Reference") -> str:
     """Render a chord reference as a compact two-column single-page PDF."""
-    from export.annotate import _fix_flats
+    from export.labeling import _fix_flats
     title = _sanitize(title) or "Chord Reference"
     top_chords = _get_top_chords(chord_info, max_chords=12)
     if not top_chords:
@@ -391,7 +391,7 @@ def _sanitize(text: str) -> str:
 
 def _get_top_chords(chord_info: dict, max_chords: int = 12) -> list[tuple[str, int]]:
     """Extract the most common usable chord symbols from analysis."""
-    from export.annotate import _simplify_chord_name, _is_usable_chord_name
+    from export.labeling import _simplify_chord_name, _is_usable_chord_name
 
     progression = chord_info.get("chord_progression_full", [])
     counts: Counter = Counter()

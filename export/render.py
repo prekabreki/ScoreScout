@@ -138,6 +138,7 @@ def export_pdf_from_mscz(
     profile_name: str = "full",
     octaves: bool = False,
     chord_info: dict | None = None,
+    key_info: dict | None = None,
 ) -> str:
     """Export PDF by injecting annotations directly into a .mscz file.
 
@@ -154,7 +155,7 @@ def export_pdf_from_mscz(
         tmp_mscz = tmp.name
 
     try:
-        inject_mscz(mscz_path, tmp_mscz, profile_name, octaves, chord_info)
+        inject_mscz(mscz_path, tmp_mscz, profile_name, octaves, chord_info, key_info)
 
         log.info("Rendering injected .mscz via MuseScore: %s", output_path)
         result = subprocess.run(

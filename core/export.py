@@ -99,6 +99,7 @@ def export_annotated(
                     profile_name=profile_name,
                     octaves=include_octaves,
                     chord_info=analysis.get("chords"),
+                    key_info=analysis.get("key"),
                 )
             else:
                 annotated = _annotate(score, analysis, profile)

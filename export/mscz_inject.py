@@ -4,11 +4,17 @@ Preserves MuseScore's original layout by modifying the XML inside the
 .mscz ZIP archive rather than round-tripping through music21.
 
 Flow:
-  1. music21 analyzes the score and produces annotation labels.
-  2. This module unzips the .mscz, walks the XML in parallel with music21,
-     matches notes by (staff, measure-index, beat-offset, pitch), and injects
-     <Lyrics> elements.
-  3. The modified .mscz is re-zipped and rendered via MuseScore CLI.
+  1. The caller passes the score's key and chord analysis alongside the .mscz.
+  2. This module unzips the .mscz and walks the XML, building the shared
+     ``PartEvent`` stream: it converts MuseScore MIDI ints to key-spelled
+     music21 pitches and tracks (measure, beat) through tuplets and grace notes.
+  3. ``export.labeling`` selects the notes the profile wants and computes the
+     label text, and this module writes them back as <Lyrics> elements.
+  4. The modified .mscz is re-zipped and rendered via MuseScore CLI.
+
+Only the XML reader/writer lives here; both label spelling and the "which
+notes to label" policy are the shared core, so this path agrees with the
+music21 path in ``export.annotate``.
 """
 
 import logging
@@ -19,10 +25,13 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from music21 import note as m21note
-from music21.stream import Score
-
-from export.annotate import _fix_flats, _note_name, _lookup_chord_name_at, _is_usable_chord_name
+from export.labeling import (
+    PartEvent,
+    label_for,
+    select_labels,
+    spell_midi,
+)
+from export.profiles import AnnotationProfile, get_profile
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +42,6 @@ _DUR_MAP = {
     "eighth": 0.5, "16th": 0.25, "32nd": 0.125,
     "64th": 0.0625, "128th": 0.03125,
 }
-
-NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
 # MuseScore marks a grace chord with one of these child tags; it sounds with
 # zero metrical duration, so it must not advance the running beat counter.
@@ -79,7 +86,7 @@ def _dur_quarters(chord_el: ET.Element, tuplet_ratio: float = 1.0) -> float:
     Accounts for durationType + dots, scales by the enclosing tuplet ratio
     (``tuplet_ratio``, from ``_tuplet_ratio``), and returns 0.0 for grace
     notes, which carry no metrical duration. This keeps the running beat
-    counter in ``_inject_full`` aligned with music21 so (measure, beat)-keyed
+    counter in ``_collect_events`` aligned with music21 so (measure, beat)-keyed
     chord-name lookups land on the right notes. The music21 export path
     (export/annotate.py) is unaffected.
     """
@@ -99,77 +106,13 @@ def _dur_quarters(chord_el: ET.Element, tuplet_ratio: float = 1.0) -> float:
     return total * tuplet_ratio
 
 
-def _label_for_chord_with_analysis(
-    chord_el: ET.Element, octaves: bool,
-    chord_info: dict | None, measure_num: int, beat: float,
-) -> str:
-    """Build a label, trying chord name lookup for 3+ note chords."""
-    notes = chord_el.findall("Note")
-    if not notes:
-        return ""
-
-    pitches = []
-    for n in notes:
-        p_el = n.find("pitch")
-        if p_el is not None:
-            pitches.append(int(p_el.text))
-    pitches.sort()
-
-    if not pitches:
-        return ""
-
-    num = len(pitches)
-    names = []
-    for midi in pitches:
-        pc = NOTE_NAMES[midi % 12]
-        if octaves:
-            octave = (midi // 12) - 1
-            names.append("%s%d" % (pc, octave))
-        else:
-            names.append(pc)
-
-    if num == 1:
-        return names[0]
-    elif num == 2:
-        if NOTE_NAMES[pitches[0] % 12] == NOTE_NAMES[pitches[1] % 12]:
-            return names[0]
-        return "/".join(names)
-    else:
-        # Try chord name from analysis
-        chord_name = _lookup_chord_from_info(chord_info, measure_num, beat)
-        if chord_name and "power" in chord_name.lower():
-            return "/".join(names)
-        if chord_name:
-            return chord_name
-        if len(names) > 3:
-            return "/".join(names[:3]) + "+"
-        return "/".join(names)
-
-
-def _lookup_chord_from_info(chord_info: dict | None, measure: int, beat: float) -> str | None:
-    """Look up chord name from analysis data by measure+beat."""
-    if not chord_info:
-        return None
-    progression = chord_info.get("chord_progression_full", [])
-    if not progression:
-        return None
-    for entry in progression:
-        if entry.get("measure") == measure and abs(entry.get("beat", 1.0) - beat) < 0.25:
-            name = entry.get("name", "")
-            if name and not name.startswith("["):
-                from export.annotate import _simplify_chord_name
-                simplified = _simplify_chord_name(name)
-                if simplified and _is_usable_chord_name(simplified):
-                    return _fix_flats(simplified)
-    return None
-
-
 def inject_mscz(
     mscz_path: str,
     output_path: str,
     profile_name: str = "full",
     octaves: bool = False,
     chord_info: dict | None = None,
+    key_info: dict | None = None,
 ) -> str:
     """Inject lyric annotations into a .mscz file.
 
@@ -179,6 +122,8 @@ def inject_mscz(
         profile_name: 'full', 'guided', or 'clean'.
         octaves: Include octave numbers in labels.
         chord_info: Chord analysis dict for chord name lookup.
+        key_info: Key analysis dict; its signed sharps/flats count spells
+            MuseScore MIDI ints the same way the music21 path spells notes.
 
     Returns:
         Path to the output .mscz file.
@@ -226,13 +171,11 @@ def inject_mscz(
         if not content_staves:
             raise RuntimeError("No content <Staff> elements in Score")
 
-        total_injected = 0
-
-        if profile_name == "full":
-            total_injected = _inject_full(content_staves, octaves, chord_info)
-        elif profile_name == "guided":
-            total_injected = _inject_full(content_staves, octaves, chord_info)
-            # TODO: guided mode could be sparser, but for now use full
+        key_sharps = key_info.get("sharps_flats_count", 0) if key_info else 0
+        profile = get_profile(profile_name)
+        total_injected = _inject_labels(
+            content_staves, profile, key_sharps, chord_info, octaves,
+        )
 
         log.info("Injected %d lyric labels into %s", total_injected, Path(mscz_path).name)
 
@@ -255,15 +198,24 @@ def inject_mscz(
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _inject_full(
+def _collect_events(
     content_staves: list[ET.Element],
-    octaves: bool,
-    chord_info: dict | None,
-) -> int:
-    """Inject labels on every note/chord across all staves."""
-    count = 0
+    key_sharps: int,
+) -> list[list[PartEvent]]:
+    """Flatten each staff's XML into the shared :class:`PartEvent` stream.
 
+    This is the only piece of the .mscz path that knows the XML shape: it walks
+    measures/voices in document order, advances a beat counter through tuplets
+    and grace notes, and converts each ``<pitch>`` MIDI int to a key-spelled
+    music21 ``Pitch``. Selection and label text are then the shared core.
+    """
+    parts: list[list[PartEvent]] = []
+
+    # One staff becomes one part. The guided policy's per-part rules (first
+    # note, first accidental, rest re-entry, next-note leap) then run per staff
+    # exactly as they run per music21 Part on the other path.
     for staff in content_staves:
+        events: list[PartEvent] = []
         measures = [c for c in staff if c.tag == "Measure"]
         measure_num = 0
 
@@ -301,25 +253,55 @@ def _inject_full(
                         ratio *= tuplet
 
                     if elem.tag == "Chord":
-                        label = _label_for_chord_with_analysis(
-                            elem, octaves, chord_info, measure_num, beat,
+                        midis = sorted(
+                            int(p.text) for p in elem.findall("Note/pitch") if p.text
                         )
-                        if label:
-                            lyrics = ET.Element("Lyrics")
-                            text_el = ET.SubElement(lyrics, "text")
-                            text_el.text = label
-
-                            children = list(elem)
-                            note_idx = next(
-                                (i for i, c in enumerate(children) if c.tag == "Note"),
-                                len(children),
-                            )
-                            elem.insert(note_idx, lyrics)
-                            count += 1
-
-                        beat += _dur_quarters(elem, ratio)
+                        pitches = [spell_midi(m, key_sharps) for m in midis]
+                        dur = _dur_quarters(elem, ratio)
+                        events.append(PartEvent(
+                            pitches, measure_num, beat, dur, target=elem,
+                        ))
+                        beat += dur
 
                     elif elem.tag == "Rest":
-                        beat += _dur_quarters(elem, ratio)
+                        dur = _dur_quarters(elem, ratio)
+                        events.append(PartEvent(
+                            [], measure_num, beat, dur, is_rest=True,
+                        ))
+                        beat += dur
+
+        parts.append(events)
+
+    return parts
+
+
+def _inject_labels(
+    content_staves: list[ET.Element],
+    profile: AnnotationProfile,
+    key_sharps: int,
+    chord_info: dict | None,
+    octaves: bool,
+) -> int:
+    """Label the selected notes/chords through the shared core, writing lyrics."""
+    parts = _collect_events(content_staves, key_sharps)
+    selected = select_labels(parts, profile, key_sharps=key_sharps)
+
+    count = 0
+    for ev in selected:
+        label = label_for(ev.pitches, chord_info, ev.measure, ev.beat, octaves)
+        if not label:
+            continue
+
+        lyrics = ET.Element("Lyrics")
+        text_el = ET.SubElement(lyrics, "text")
+        text_el.text = label
+
+        children = list(ev.target)
+        note_idx = next(
+            (i for i, c in enumerate(children) if c.tag == "Note"),
+            len(children),
+        )
+        ev.target.insert(note_idx, lyrics)
+        count += 1
 
     return count
