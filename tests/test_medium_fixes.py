@@ -13,7 +13,7 @@ from analyzer.difficulty import analyze_difficulty, DEFAULT_BPM
 from analyzer.rhythm_analysis import analyze_rhythm, _estimate_duration_seconds
 from analyzer.stats import analyze_stats
 from analyzer.key_analysis import analyze_key
-from export.annotate import _is_accidental_outside_key
+from export.labeling import _is_accidental_outside_key
 
 
 # --- M1: library path containment (no str-prefix bypass) -------------------
