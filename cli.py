@@ -6,23 +6,14 @@ import json
 import logging
 import sys
 import os
-import time
 import traceback
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from music21.stream import Score
-
-from analyzer.parser import parse_score, extract_metadata
-from analyzer.key_analysis import analyze_key
-from analyzer.chord_analysis import analyze_chords
-from analyzer.rhythm_analysis import analyze_rhythm
-from analyzer.stats import analyze_stats
-from analyzer.structure import analyze_structure
-from analyzer.difficulty import analyze_difficulty
-from analyzer.note_annotations import generate_annotations
+from core.pipeline import run_analysis
+from core.export import export_annotated
 from llm.explain import generate_explanation
 from output.markdown import render_markdown
 from output.html import render_html
@@ -57,45 +48,6 @@ def setup_logging(debug: bool = False, log_file: str | None = None):
     # Quiet down music21's own logging unless we're in debug mode
     if not debug:
         logging.getLogger("music21").setLevel(logging.WARNING)
-
-
-def run_analysis(filepath: str, use_llm: bool = True) -> tuple[dict, Score]:
-    """Run the full analysis pipeline. Returns (analysis_dict, score).
-
-    When use_llm is False, the Tier-4 Claude chord-identification call is skipped
-    (no network request) in addition to the explanation step.
-    """
-    t0 = time.perf_counter()
-    log.info("=== Starting analysis of %s ===", filepath)
-
-    score = parse_score(filepath)
-    metadata = extract_metadata(score)
-    log.info("Title: %s | Composer: %s | Parts: %d",
-             metadata["title"], metadata["composer"], metadata["number_of_parts"])
-
-    key_info = analyze_key(score)
-    rhythm_info = analyze_rhythm(score)
-    stats_info = analyze_stats(score)
-    chord_info = analyze_chords(score, key_info, use_llm=use_llm)
-    structure_info = analyze_structure(score)
-    difficulty_info = analyze_difficulty(score, rhythm_info, stats_info, key_info)
-    annotations = generate_annotations(score)
-
-    elapsed = time.perf_counter() - t0
-    log.info("=== Analysis complete in %.2fs ===", elapsed)
-
-    analysis = {
-        "metadata": metadata,
-        "key": key_info,
-        "rhythm": rhythm_info,
-        "stats": stats_info,
-        "chords": chord_info,
-        "structure": structure_info,
-        "difficulty": difficulty_info,
-        "annotations": annotations,
-    }
-
-    return analysis, score
 
 
 def main():
@@ -155,7 +107,11 @@ def main():
     log.debug("Python %s on %s", sys.version, sys.platform)
 
     try:
-        analysis, score = run_analysis(args.file, use_llm=not args.no_llm)
+        analysis, score = run_analysis(
+            args.file,
+            use_llm=not args.no_llm,
+            title_fallback=Path(args.file).name,
+        )
     except (FileNotFoundError, ValueError) as e:
         log.error("Fatal: %s", e)
         log.debug(traceback.format_exc())
@@ -167,12 +123,7 @@ def main():
 
     # Export annotated sheet music if requested
     if args.export:
-        from export.profiles import get_profile
-        from export.annotate import annotate_score
-        from export.render import export_musicxml, export_pdf, export_png, export_pdf_from_mscz
         from config import EXPORT_DIR
-
-        profile = get_profile(args.annotations, include_octaves=args.octaves)
 
         # Append profile name to filename (e.g., "song.musicxml" -> "song_guided.musicxml")
         export_path = Path(args.export)
@@ -186,100 +137,21 @@ def main():
             export_path = EXPORT_DIR / export_path.name
 
         ext = export_path.suffix.lower()
-
-        is_mscz = Path(args.file).suffix.lower() == ".mscz"
-
-        # Bind up front: the .mscz injection path never builds an annotated
-        # music21 score, so the RuntimeError fallback must derive one itself.
-        annotated = None
+        fmt = "pdf" if ext == ".pdf" else "png" if ext == ".png" else "musicxml"
 
         try:
-            if ext == ".pdf":
-                if is_mscz and args.annotations != "clean":
-                    log.info("Using .mscz injection path for %s", Path(args.file).name)
-                    export_pdf_from_mscz(
-                        args.file, str(export_path),
-                        profile_name=args.annotations,
-                        octaves=args.octaves,
-                        chord_info=analysis.get("chords"),
-                    )
-                else:
-                    annotated = annotate_score(
-                        score, profile,
-                        chord_info=analysis.get("chords"),
-                        difficulty_info=analysis.get("difficulty"),
-                        key_info=analysis.get("key"),
-                    )
-                    export_pdf(annotated, str(export_path))
-            elif ext == ".png":
-                annotated = annotate_score(
-                    score, profile,
-                    chord_info=analysis.get("chords"),
-                    difficulty_info=analysis.get("difficulty"),
-                    key_info=analysis.get("key"),
-                )
-                export_png(annotated, str(export_path))
-            else:
-                annotated = annotate_score(
-                    score, profile,
-                    chord_info=analysis.get("chords"),
-                    difficulty_info=analysis.get("difficulty"),
-                    key_info=analysis.get("key"),
-                )
-                export_musicxml(annotated, str(export_path))
-            log.info("Exported annotated score to %s", export_path)
-
-            # Append extra PDF pages after MuseScore renders
-            if ext == ".pdf" and (args.chord_guide or args.text_guide):
-                from export.guide_pdf import render_chord_guide_pdf, render_guide_pdf, merge_pdfs
-                pdfs_to_merge = [str(export_path)]
-                tmp_paths = []
-                try:
-                    if args.chord_guide:
-                        chord_path = str(export_path.with_stem(f"{export_path.stem}_chords_tmp"))
-                        title = analysis.get("metadata", {}).get("title", "Score")
-                        render_chord_guide_pdf(
-                            analysis.get("chords", {}), chord_path,
-                            key_info=analysis.get("key"),
-                            title=f"{title} — Chord Reference",
-                        )
-                        pdfs_to_merge.append(chord_path)
-                        tmp_paths.append(chord_path)
-
-                    if args.text_guide and not args.no_llm:
-                        explanation = generate_explanation(analysis)
-                        if explanation:
-                            title = analysis.get("metadata", {}).get("title", "Score")
-                            guide_path = str(export_path.with_stem(f"{export_path.stem}_guide_tmp"))
-                            render_guide_pdf(explanation, guide_path,
-                                             title=f"{title} — Beginner's Guide")
-                            pdfs_to_merge.append(guide_path)
-                            tmp_paths.append(guide_path)
-                    elif args.text_guide:
-                        log.warning("--text-guide requires LLM (don't use --no-llm)")
-
-                    if len(pdfs_to_merge) > 1:
-                        merge_pdfs(pdfs_to_merge, str(export_path))
-                        log.info("Appended guide pages to %s", export_path)
-                except Exception as e:
-                    log.warning("Guide PDF failed: %s — score PDF still available", e)
-                finally:
-                    for tmp in tmp_paths:
-                        Path(tmp).unlink(missing_ok=True)
-
+            export_annotated(
+                score, analysis, fmt,
+                out_path=str(export_path),
+                profile_name=args.annotations,
+                include_octaves=args.octaves,
+                source_path=args.file,
+                include_chord_guide=args.chord_guide,
+                include_text_guide=args.text_guide,
+                allow_llm=not args.no_llm,
+            )
         except RuntimeError as e:
             log.error("Export failed: %s", e)
-            if ext in (".pdf", ".png"):
-                if annotated is None:
-                    annotated = annotate_score(
-                        score, profile,
-                        chord_info=analysis.get("chords"),
-                        difficulty_info=analysis.get("difficulty"),
-                        key_info=analysis.get("key"),
-                    )
-                fallback = str(export_path.with_suffix(".musicxml"))
-                export_musicxml(annotated, fallback)
-                log.info("Fell back to MusicXML export: %s", fallback)
 
     # Generate report
     if args.format == "json":

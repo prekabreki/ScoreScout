@@ -36,6 +36,8 @@ absent). CI runs on push/PR (`.github/workflows/ci.yml`).
 
 ## Architecture
 
+- `core/` — shared front-end-agnostic code: `pipeline.py` (`run_analysis`) and `export.py`
+  (`export_annotated`), each the single implementation both `cli.py` and `app.py` call
 - `analyzer/` — pure analysis over a parsed music21 score
 - `llm/` — Claude prompt + explanation generation
 - `output/` — report renderers (`html.py`, `markdown.py`)

@@ -17,19 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, request, jsonify, send_file
 
-from analyzer.parser import parse_score, extract_metadata, SUPPORTED_EXTENSIONS
-from analyzer.key_analysis import analyze_key
-from analyzer.chord_analysis import analyze_chords
-from analyzer.rhythm_analysis import analyze_rhythm
-from analyzer.stats import analyze_stats
-from analyzer.structure import analyze_structure
-from analyzer.difficulty import analyze_difficulty
-from analyzer.note_annotations import generate_annotations
+from analyzer.parser import parse_score, SUPPORTED_EXTENSIONS
 from llm.explain import generate_explanation
 from output.html import render_html
-from export.profiles import PROFILES, get_profile
-from export.annotate import annotate_score
-from export.render import export_musicxml, export_pdf, export_png, export_pdf_from_mscz, get_available_formats
+from export.render import get_available_formats
+from core.pipeline import run_analysis
+from core import export as core_export
 
 log = logging.getLogger("sheet_music_analyzer")
 
@@ -934,39 +927,6 @@ function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').repl
 </html>"""
 
 
-def _run_analysis(filepath: str, original_name: str, use_llm: bool = True):
-    """Run analysis pipeline. Returns (score, analysis_dict).
-
-    When use_llm is False, the Tier-4 Claude chord-identification call is skipped
-    (no network request), matching the "Skip AI explanation" front-end option.
-    """
-    score = parse_score(filepath)
-    metadata = extract_metadata(score)
-    if metadata["title"] == "Unknown":
-        metadata["title"] = Path(original_name).stem
-
-    key_info = analyze_key(score)
-    rhythm_info = analyze_rhythm(score)
-    stats_info = analyze_stats(score)
-    chord_info = analyze_chords(score, key_info, use_llm=use_llm)
-    structure_info = analyze_structure(score)
-    difficulty_info = analyze_difficulty(score, rhythm_info, stats_info, key_info)
-    annotations = generate_annotations(score)
-
-    analysis = {
-        "metadata": metadata,
-        "key": key_info,
-        "rhythm": rhythm_info,
-        "stats": stats_info,
-        "chords": chord_info,
-        "structure": structure_info,
-        "difficulty": difficulty_info,
-        "annotations": annotations,
-    }
-
-    return score, analysis
-
-
 def _run_analysis_pipeline(filepath: str, original_name: str, skip_llm: bool,
                            force: bool = False, persist: bool = True):
     """Full pipeline: analyze -> cache -> optional LLM -> render HTML.
@@ -1013,7 +973,9 @@ def _run_analysis_pipeline(filepath: str, original_name: str, skip_llm: bool,
         return render_html(analysis, explanation, cache_id=cache_id, export_formats=export_formats)
 
     # Cache miss — run full analysis
-    score, analysis = _run_analysis(filepath, original_name, use_llm=not skip_llm)
+    analysis, score = run_analysis(
+        filepath, use_llm=not skip_llm, title_fallback=original_name,
+    )
 
     explanation = None
     if not skip_llm:
@@ -1098,7 +1060,9 @@ def analyze_batch_one():
 
     try:
         log.info("Batch analyzing: %s", resolved.name)
-        score, analysis = _run_analysis(str(resolved), resolved.name, use_llm=not skip_llm)
+        analysis, score = run_analysis(
+            str(resolved), use_llm=not skip_llm, title_fallback=resolved.name,
+        )
 
         explanation = None
         if not skip_llm:
@@ -1178,149 +1142,55 @@ def export_annotated():
     resolved_source = _resolve_cache_key(cache_key)
     source_path = str(resolved_source) if resolved_source else None
 
+    if source_path is None and _is_mscz_source(cache_key):
+        log.warning(
+            "Original .mscz source for cache key %r not found on this machine - "
+            "falling back to music21 export path", cache_key,
+        )
+
+    title = analysis.get("metadata", {}).get("title", "annotated")
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title).strip()
+
+    # On-disk filenames carry a per-request token so concurrent web requests
+    # for the same title can't clobber each other's intermediate/output files
+    # in the shared EXPORT_DIR (M5). The user-facing download name stays clean.
+    token = uuid.uuid4().hex[:8]
+    disk_stem = f"{safe_title}_{profile_name}_{token}"
+
+    from config import EXPORT_DIR
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Reuse a cached explanation for the optional text guide; persist any newly
+    # generated one so we never call Claude twice for the same score.
+    cache_entry = _analysis_cache.get(cache_key)
+    explanation = cache_entry.get("explanation") if cache_entry else None
+
+    def _store_explanation(text: str):
+        if cache_entry is not None:
+            cache_entry["explanation"] = text
+            _cache_save_disk(cache_key, cache_entry)
+
     try:
-        profile = get_profile(profile_name, include_octaves=include_octaves)
+        result = core_export.export_annotated(
+            score, analysis, fmt,
+            out_path=str(EXPORT_DIR / f"{disk_stem}.{fmt}"),
+            profile_name=profile_name,
+            include_octaves=include_octaves,
+            source_path=source_path,
+            include_chord_guide=include_chord_guide,
+            include_text_guide=include_text_guide,
+            explanation=explanation,
+            on_explanation=_store_explanation,
+        )
     except ValueError as e:
         return jsonify(error=str(e)), 400
-
-    try:
-        title = analysis.get("metadata", {}).get("title", "annotated")
-        safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title).strip()
-        filename = f"{safe_title}_{profile_name}.{fmt}"
-
-        # On-disk filenames carry a per-request token so concurrent web requests
-        # for the same title can't clobber each other's intermediate/output files
-        # in the shared EXPORT_DIR (M5). The user-facing download name stays clean.
-        token = uuid.uuid4().hex[:8]
-        disk_stem = f"{safe_title}_{profile_name}_{token}"
-
-        # Save to hardcoded export directory
-        from config import EXPORT_DIR
-        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = str(EXPORT_DIR / f"{disk_stem}.{fmt}")
-
-        # Bind `annotated` up front so the music21 fallback (and the outer
-        # RuntimeError handler) always has something to export, even on the
-        # .mscz injection path that never builds an annotated music21 score.
-        annotated = None
-
-        if source_path is None and _is_mscz_source(cache_key):
-            log.warning(
-                "Original .mscz source for cache key %r not found on this machine — "
-                "falling back to music21 export path", cache_key,
-            )
-
-        if fmt == "pdf":
-            # .mscz sources use direct injection (preserves layout)
-            if source_path and _is_mscz_source(source_path) and profile_name != "clean":
-                log.info("Using .mscz injection path for %s", Path(source_path).name)
-                export_pdf_from_mscz(
-                    source_path, out_path,
-                    profile_name=profile_name,
-                    octaves=include_octaves,
-                    chord_info=analysis.get("chords"),
-                )
-            else:
-                annotated = annotate_score(
-                    score, profile,
-                    chord_info=analysis.get("chords"),
-                    difficulty_info=analysis.get("difficulty"),
-                    key_info=analysis.get("key"),
-                )
-                export_pdf(annotated, out_path)
-        elif fmt == "png":
-            annotated = annotate_score(
-                score, profile,
-                chord_info=analysis.get("chords"),
-                difficulty_info=analysis.get("difficulty"),
-                key_info=analysis.get("key"),
-            )
-            export_png(annotated, out_path)
-        else:
-            annotated = annotate_score(
-                score, profile,
-                chord_info=analysis.get("chords"),
-                difficulty_info=analysis.get("difficulty"),
-                key_info=analysis.get("key"),
-            )
-            fmt = "musicxml"
-            filename = f"{safe_title}_{profile_name}.{fmt}"
-            out_path = str(EXPORT_DIR / f"{disk_stem}.{fmt}")
-            export_musicxml(annotated, out_path)
-
-        # Append extra PDF pages (chord guide / text guide) after MuseScore renders
-        if fmt == "pdf" and (include_chord_guide or include_text_guide):
-            from export.guide_pdf import render_chord_guide_pdf, render_guide_pdf, merge_pdfs
-            pdfs_to_merge = [out_path]
-            tmp_paths = []
-
-            try:
-                if include_chord_guide:
-                    chord_path = str(EXPORT_DIR / f"{disk_stem}_chords_tmp.pdf")
-                    render_chord_guide_pdf(
-                        analysis.get("chords", {}), chord_path,
-                        key_info=analysis.get("key"),
-                        title=f"{title} — Chord Reference",
-                    )
-                    pdfs_to_merge.append(chord_path)
-                    tmp_paths.append(chord_path)
-
-                if include_text_guide:
-                    # Check cache for existing explanation first
-                    cache_key = _cache_id_map.get(cache_id, cache_id)
-                    cache_entry = _analysis_cache.get(cache_key)
-                    explanation = cache_entry.get("explanation") if cache_entry else None
-                    if explanation is None:
-                        from llm.explain import generate_explanation
-                        explanation = generate_explanation(analysis)
-                        # Store it so we don't call Claude again
-                        if cache_entry is not None:
-                            cache_entry["explanation"] = explanation
-                            _cache_save_disk(cache_key, cache_entry)
-                    if explanation:
-                        guide_path = str(EXPORT_DIR / f"{disk_stem}_guide_tmp.pdf")
-                        render_guide_pdf(explanation, guide_path,
-                                         title=f"{title} — Beginner's Guide")
-                        pdfs_to_merge.append(guide_path)
-                        tmp_paths.append(guide_path)
-
-                if len(pdfs_to_merge) > 1:
-                    merged_path = str(EXPORT_DIR / f"{disk_stem}_merged.pdf")
-                    merge_pdfs(pdfs_to_merge, merged_path)
-                    out_path = merged_path
-                    filename = f"{safe_title}_{profile_name}.pdf"
-
-            except Exception as e:
-                log.warning("Guide PDF generation failed: %s — returning score PDF only", e)
-            finally:
-                for tmp in tmp_paths:
-                    Path(tmp).unlink(missing_ok=True)
-
-        log.info("Exported to %s", out_path)
-        return send_file(out_path, as_attachment=True, download_name=filename)
-
-    except RuntimeError as e:
-        log.warning("Export as %s failed: %s — falling back to MusicXML", fmt, e)
-        from config import EXPORT_DIR
-        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-        # The .mscz injection path never builds an annotated music21 score, so
-        # `annotated` may still be None here — derive it from the parsed score.
-        if annotated is None:
-            annotated = annotate_score(
-                score, profile,
-                chord_info=analysis.get("chords"),
-                difficulty_info=analysis.get("difficulty"),
-                key_info=analysis.get("key"),
-            )
-        filename = f"{safe_title}_{profile_name}.musicxml"
-        out_path = str(EXPORT_DIR / f"{disk_stem}.musicxml")
-        export_musicxml(annotated, out_path)
-        log.info("Fell back to MusicXML export: %s", out_path)
-        return send_file(out_path, as_attachment=True, download_name=filename)
     except Exception as e:
         log.error("Export failed: %s", e)
         log.debug(traceback.format_exc())
         return jsonify(error=str(e)), 500
+
+    filename = f"{safe_title}_{profile_name}.{result.fmt}"
+    return send_file(result.path, as_attachment=True, download_name=filename)
 
 
 if __name__ == "__main__":

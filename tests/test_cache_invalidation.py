@@ -13,7 +13,9 @@ def test_cache_invalidates_on_file_change(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "LIBRARY_DIRS", [tmp_path])
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
 
-    score, analysis = app._run_analysis(str(score_file), "tune.musicxml", use_llm=False)
+    analysis, score = app.run_analysis(
+        str(score_file), use_llm=False, title_fallback="tune.musicxml",
+    )
     app._cache_put(score, analysis, filepath=str(score_file), persist=False)
 
     # Fresh cache: hit.
