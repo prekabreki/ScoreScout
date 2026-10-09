@@ -1,111 +1,100 @@
 """Markdown report renderer."""
 
+from output.report_model import build_report_model
+
 
 def render_markdown(analysis: dict, explanation: str | None = None) -> str:
     """Render a full markdown report from analysis data and optional LLM explanation."""
+    model = build_report_model(analysis)
     lines = []
-    meta = analysis.get("metadata", {})
 
     # Title
-    title = meta.get("title", "Unknown")
-    composer = meta.get("composer", "Unknown")
-    lines.append(f"# {title}")
-    if composer != "Unknown":
-        lines.append(f"**Composer:** {composer}")
+    lines.append(f"# {model.title}")
+    if model.has_composer:
+        lines.append(f"**Composer:** {model.composer}")
     lines.append("")
 
     # Quick stats bar
-    diff = analysis.get("difficulty", {})
-    overall = diff.get("overall_difficulty", "?")
-    stats = analysis.get("stats", {})
-    rhythm = analysis.get("rhythm", {})
-    key = analysis.get("key", {})
-
     lines.append("## At a Glance")
-    lines.append(f"- **Key:** {key.get('detected_key', '?')}")
-    ts_list = rhythm.get("time_signatures", [])
-    ts_str = ", ".join(t.get("signature", "?") for t in ts_list) if ts_list else "4/4"
-    lines.append(f"- **Time Signature:** {ts_str}")
-    tempos = rhythm.get("tempos", [])
-    if tempos:
-        first = tempos[0]
-        if first.get("bpm"):
-            lines.append(f"- **Tempo:** {first.get('bpm')} BPM")
-        elif first.get("from_bpm"):
-            lines.append(f"- **Tempo:** {first.get('from_bpm')} BPM")
-    lines.append(f"- **Measures:** {stats.get('num_measures', '?')}")
-    lines.append(f"- **Total Notes:** {stats.get('total_notes', '?')}")
-    dur = rhythm.get("estimated_duration_seconds")
-    if dur:
-        mins = int(dur // 60)
-        secs = int(dur % 60)
-        lines.append(f"- **Estimated Duration:** {mins}:{secs:02d}")
-    lines.append(f"- **Difficulty:** {overall}/10")
+    lines.append(f"- **Key:** {model.detected_key}")
+    lines.append(f"- **Time Signature:** {model.time_signature}")
+    if model.has_tempo:
+        lines.append(f"- **Tempo:** {model.tempo}")
+    lines.append(f"- **Measures:** {model.num_measures}")
+    lines.append(f"- **Total Notes:** {model.total_notes}")
+    if model.has_duration:
+        lines.append(f"- **Estimated Duration:** {model.duration}")
+    lines.append(f"- **Difficulty:** {model.overall_difficulty}/10")
     lines.append("")
 
     # Difficulty breakdown
     lines.append("## Difficulty Breakdown")
-    component = diff.get("component_scores", {})
-    labels = {
-        "rhythm_complexity": "Rhythm Complexity",
-        "hand_span": "Hand Span",
-        "tempo_density": "Tempo x Density",
-        "accidentals": "Accidentals",
-        "jump_distance": "Jump Distance",
-        "chord_density": "Chord Density",
-    }
-    for k, label in labels.items():
-        val = component.get(k, 0)
+    for label, val in model.difficulty_breakdown:
         bar = _bar(val, 10)
         lines.append(f"- {label}: {bar} {val}/10")
     lines.append("")
 
     # Skills required
-    skills = diff.get("skills_required", [])
-    if skills:
+    if model.skills_required:
         lines.append("## Skills Required")
-        for s in skills:
+        for s in model.skills_required:
             lines.append(f"- {s}")
         lines.append("")
 
     # Key info
-    if key.get("key_disagreement"):
+    if model.key_disagreement:
         lines.append("## Key Note")
         lines.append(
-            f"The written key signature suggests **{key.get('explicit_key_signature')}**, "
-            f"but the music sounds more like **{key.get('detected_key')}**. "
+            f"The written key signature suggests **{model.explicit_key_signature}**, "
+            f"but the music sounds more like **{model.detected_key}**. "
             "This is common in anime/game music with modal or borrowed-chord writing."
         )
         lines.append("")
 
+    # Hands
+    if model.per_hand:
+        lines.append("## Hands")
+        lines.append("| Part | Notes | Lowest | Highest |")
+        lines.append("| --- | --- | --- | --- |")
+        for h in model.per_hand:
+            lines.append(
+                f"| {h.get('part_name', '?')} | {h.get('note_count', 0)} "
+                f"| {h.get('lowest_note', '?')} | {h.get('highest_note', '?')} |"
+            )
+        lines.append("")
+
     # Chords
-    chords = analysis.get("chords", {})
-    common_chords = chords.get("most_common_chords", [])
-    if common_chords:
+    if model.common_chords:
         lines.append("## Most Common Chords")
-        for ch in common_chords[:10]:
+        for ch in model.common_chords:
             lines.append(f"- **{ch.get('name', '?')}** (x{ch.get('count', 0)})")
         lines.append("")
 
     # Structure
-    struct = analysis.get("structure", {})
-    kc = struct.get("key_changes", [])
-    if kc:
+    if model.key_changes:
         lines.append("## Key Changes")
-        for change in kc:
-            lines.append(f"- Measure {change.get('at_measure', '?')}: {change.get('from_key', '?')} -> {change.get('to_key', '?')}")
+        for change in model.key_changes:
+            lines.append(
+                f"- Measure {change.get('at_measure', '?')}: "
+                f"{change.get('from_key', '?')} -> {change.get('to_key', '?')}"
+            )
+        lines.append("")
+
+    # Dynamics
+    if model.dynamics:
+        lines.append("## Dynamic Markings")
+        for d in model.dynamics:
+            lines.append(f"- m.{d.get('measure', '?')}: {d.get('marking', '?')}")
         lines.append("")
 
     # Note annotations (simplified)
-    annotations = analysis.get("annotations", {})
-    simplified = annotations.get("simplified", [])
-    if simplified:
+    if model.note_map:
         lines.append("## Note Map (Simplified)")
         lines.append("```")
-        for line in simplified[:48]:
+        for line in model.note_map:
             lines.append(line)
-        if len(simplified) > 48:
-            lines.append(f"... ({len(simplified) - 48} more measures)")
+        if model.note_map_omitted:
+            lines.append(f"... ({model.note_map_omitted} more measures)")
         lines.append("```")
         lines.append("")
 

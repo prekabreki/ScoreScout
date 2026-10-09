@@ -4,6 +4,8 @@ import html as _html
 import json
 import re
 
+from output.report_model import build_report_model
+
 
 def _esc(text) -> str:
     """Escape HTML special characters, including quotes (attribute-safe)."""
@@ -32,57 +34,13 @@ def render_html(
     export_formats: list[str] | None = None,
 ) -> str:
     """Render a full HTML report from analysis data and optional LLM explanation."""
-    meta = analysis.get("metadata", {})
-    title = meta.get("title", "Unknown")
-    composer = meta.get("composer", "Unknown")
-    diff = analysis.get("difficulty", {})
-    overall = diff.get("overall_difficulty", 0)
-    stats = analysis.get("stats", {})
-    rhythm = analysis.get("rhythm", {})
-    key = analysis.get("key", {})
-    chords = analysis.get("chords", {})
-    struct = analysis.get("structure", {})
-    annotations = analysis.get("annotations", {})
+    model = build_report_model(analysis)
 
     # Difficulty color
-    diff_color = _difficulty_color(overall)
-
-    # Time sig string
-    ts_list = rhythm.get("time_signatures", [])
-    ts_str = ", ".join(t.get("signature", "?") for t in ts_list) if ts_list else "4/4"
-
-    # Tempo
-    tempos = rhythm.get("tempos", [])
-    first_tempo = tempos[0] if tempos else {}
-    if first_tempo.get("bpm"):
-        bpm_str = f'{first_tempo.get("bpm")} BPM'
-    elif first_tempo.get("from_bpm"):
-        bpm_str = f'{first_tempo.get("from_bpm")} BPM'
-    else:
-        bpm_str = "N/A"
-
-    # Duration
-    dur = rhythm.get("estimated_duration_seconds")
-    dur_str = "N/A"
-    if dur:
-        mins = int(dur // 60)
-        secs = int(dur % 60)
-        dur_str = f"{mins}:{secs:02d}"
-
-    # Component scores
-    component = diff.get("component_scores", {})
-    labels = {
-        "rhythm_complexity": "Rhythm Complexity",
-        "hand_span": "Hand Span",
-        "tempo_density": "Tempo &times; Density",
-        "accidentals": "Accidentals",
-        "jump_distance": "Jump Distance",
-        "chord_density": "Chord Density",
-    }
+    diff_color = _difficulty_color(model.overall_difficulty)
 
     bars_html = ""
-    for k, label in labels.items():
-        val = component.get(k, 0)
+    for label, val in model.difficulty_breakdown:
         pct = val / 10 * 100
         color = _difficulty_color(val)
         bars_html += f"""
@@ -95,32 +53,33 @@ def render_html(
         </div>"""
 
     # Skills
-    skills = diff.get("skills_required", [])
-    skills_html = "".join(f"<li>{_esc(s)}</li>" for s in skills) if skills else "<li>None detected</li>"
+    skills_html = (
+        "".join(f"<li>{_esc(s)}</li>" for s in model.skills_required)
+        if model.skills_required
+        else "<li>None detected</li>"
+    )
 
     # Key disagreement note
     key_note_html = ""
-    if key.get("key_disagreement"):
+    if model.key_disagreement:
         key_note_html = f"""
         <div class="card warning">
             <h3>Key Ambiguity</h3>
-            <p>The written key signature suggests <strong>{_esc(key.get('explicit_key_signature'))}</strong>,
-            but the music sounds more like <strong>{_esc(key.get('detected_key'))}</strong>.
+            <p>The written key signature suggests <strong>{_esc(model.explicit_key_signature)}</strong>,
+            but the music sounds more like <strong>{_esc(model.detected_key)}</strong>.
             This is common in anime/game music with modal or borrowed-chord writing.</p>
         </div>"""
 
     # Chords table
-    common_chords = chords.get("most_common_chords", [])[:12]
     chords_rows = ""
-    for ch in common_chords:
+    for ch in model.common_chords:
         chords_rows += f"<tr><td>{_esc(ch.get('name', '?'))}</td><td>{_esc(ch.get('count', 0))}</td></tr>"
 
     # Key changes
-    kc = struct.get("key_changes", [])
     kc_html = ""
-    if kc:
+    if model.key_changes:
         kc_rows = ""
-        for change in kc:
+        for change in model.key_changes:
             kc_rows += f"<tr><td>m.{_esc(change.get('at_measure', '?'))}</td><td>{_esc(change.get('from_key', '?'))}</td><td>{_esc(change.get('to_key', '?'))}</td></tr>"
         kc_html = f"""
         <div class="card">
@@ -132,12 +91,11 @@ def render_html(
         </div>"""
 
     # Dynamics
-    dynamics = struct.get("dynamics", [])
     dynamics_html = ""
-    if dynamics:
+    if model.dynamics:
         dyn_items = "".join(
             f"<span class='tag'>m.{_esc(d.get('measure', '?'))}: {_esc(str(d.get('marking', '?')))}</span>"
-            for d in dynamics[:20]
+            for d in model.dynamics
         )
         dynamics_html = f"""
         <div class="card">
@@ -146,16 +104,14 @@ def render_html(
         </div>"""
 
     # Note annotations
-    simplified = annotations.get("simplified", [])
-    annot_lines = "\n".join(_esc(line) for line in simplified[:60])
+    annot_lines = "\n".join(_esc(line) for line in model.note_map)
     more_note = ""
-    if len(simplified) > 60:
-        more_note = f"<p class='muted'>... and {len(simplified) - 60} more measures</p>"
+    if model.note_map_omitted:
+        more_note = f"<p class='muted'>... and {model.note_map_omitted} more measures</p>"
 
     # Per-hand stats
-    per_hand = stats.get("per_hand", [])
     hand_rows = ""
-    for h in per_hand:
+    for h in model.per_hand:
         hand_rows += (
             f"<tr><td>{_esc(h.get('part_name', '?'))}</td>"
             f"<td>{_esc(h.get('note_count', 0))}</td>"
@@ -195,7 +151,7 @@ def render_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{_esc(title)} — Sheet Music Analysis</title>
+<title>{_esc(model.title)} — Sheet Music Analysis</title>
 <style>
 :root {{
     --bg: #0f1117;
@@ -458,37 +414,37 @@ details[open] summary::before {{
             &larr; Library
         </a>
     </div>
-    <h1>{_esc(title)}</h1>
-    <div class="subtitle">{_esc(composer) if composer != 'Unknown' else ''}</div>
+    <h1>{_esc(model.title)}</h1>
+    <div class="subtitle">{_esc(model.composer) if model.has_composer else ''}</div>
 </header>
 
 <div class="stats-grid">
     <div class="stat-pill">
-        <span class="value" style="color:{diff_color}">{_esc(overall)}</span>
+        <span class="value" style="color:{diff_color}">{_esc(model.overall_difficulty)}</span>
         <span class="label">Difficulty /10</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(key.get('detected_key', '?'))}</span>
+        <span class="value">{_esc(model.detected_key)}</span>
         <span class="label">Key</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(ts_str)}</span>
+        <span class="value">{_esc(model.time_signature)}</span>
         <span class="label">Time Sig</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(bpm_str)}</span>
+        <span class="value">{_esc(model.tempo)}</span>
         <span class="label">Tempo</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(stats.get('num_measures', '?'))}</span>
+        <span class="value">{_esc(model.num_measures)}</span>
         <span class="label">Measures</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(stats.get('total_notes', '?'))}</span>
+        <span class="value">{_esc(model.total_notes)}</span>
         <span class="label">Total Notes</span>
     </div>
     <div class="stat-pill">
-        <span class="value">{_esc(dur_str)}</span>
+        <span class="value">{_esc(model.duration)}</span>
         <span class="label">Duration</span>
     </div>
 </div>
