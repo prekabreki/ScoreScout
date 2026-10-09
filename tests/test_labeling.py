@@ -84,6 +84,32 @@ def test_spell_midi_keeps_chromatic_spelling():
 
 
 # ---------------------------------------------------------------------------
+# pitch_from_tpc
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tpc,midi,expected", [
+    (14, 60, "C4"),
+    (15, 67, "G4"),
+    (13, 65, "F4"),
+    (12, 70, "Bb4"),    # tpc 12 = Bb
+    (11, 63, "Eb4"),
+    (10, 68, "Ab4"),
+    (9, 61, "Db4"),     # chromatic flat keeps Db, not C#
+    (20, 66, "F#4"),
+    (21, 61, "C#4"),
+    (0, 58, "Cbb4"),    # double flat; sounds as Bb3
+    (28, 62, "C##4"),   # double sharp; sounds as D4
+    (26, 60, "B#3"),    # B#3 sounds as MIDI 60 (C4)
+    (7, 59, "Cb4"),     # Cb4 sounds as MIDI 59 (B3)
+])
+def test_pitch_from_tpc_spells_exactly(tpc, midi, expected):
+    p = labeling.pitch_from_tpc(tpc, midi)
+    assert p.nameWithOctave.replace("-", "b") == expected
+    # The spelled pitch still sounds at the given MIDI int.
+    assert p.midi == midi
+
+
+# ---------------------------------------------------------------------------
 # select_labels guided policy
 # ---------------------------------------------------------------------------
 
@@ -133,9 +159,12 @@ _MSCX_MULTI = (
 )
 
 
-def _chord_xml(midi, duration_type):
-    return "<Chord><durationType>%s</durationType><Note><pitch>%d</pitch></Note></Chord>" % (
-        duration_type, midi,
+def _chord_xml(midi, duration_type, tpc=None):
+    inner = "<pitch>%d</pitch>" % midi
+    if tpc is not None:
+        inner += "<tpc>%d</tpc>" % tpc
+    return "<Chord><durationType>%s</durationType><Note>%s</Note></Chord>" % (
+        duration_type, inner,
     )
 
 
@@ -178,6 +207,71 @@ def _flat_key_score():
     return score
 
 
+def _build_score(measure_specs):
+    """Build a single-part 4/4 score from per-measure note/rest specs."""
+    part = stream.Part()
+    part.append(meter.TimeSignature("4/4"))
+
+    def measure(number, items):
+        m = stream.Measure(number=number)
+        for name, ql in items:
+            if name is None:
+                m.append(note.Rest(quarterLength=ql))
+            else:
+                m.append(note.Note(name, quarterLength=ql))
+        return m
+
+    for i, items in enumerate(measure_specs, start=1):
+        part.append(measure(i, items))
+    score = stream.Score()
+    score.insert(0, part)
+    return score
+
+
+def _chromatic_flat_mscx():
+    """Three 4/4 measures in Eb major; the second note is a chromatic Db."""
+    def m(chords):
+        return "<Measure><voice>%s</voice></Measure>" % "".join(
+            _chord_xml(midi, "quarter", tpc) for midi, tpc in chords
+        )
+
+    return _MSCX_MULTI % (
+        m([(63, 11), (61, 9), (60, 14), (58, 12)])
+        + m([(63, 11), (65, 13), (67, 15), (68, 10)])
+        + m([(58, 12), (60, 14), (62, 16), (63, 11)])
+    )
+
+
+def _chromatic_flat_score():
+    return _build_score([
+        [("E-4", 1), ("D-4", 1), ("C4", 1), ("B-3", 1)],
+        [("E-4", 1), ("F4", 1), ("G4", 1), ("A-4", 1)],
+        [("B-3", 1), ("C4", 1), ("D4", 1), ("E-4", 1)],
+    ])
+
+
+def _chromatic_sharp_mscx():
+    """Three 4/4 measures in D major; the second note is a chromatic E#."""
+    def m(chords):
+        return "<Measure><voice>%s</voice></Measure>" % "".join(
+            _chord_xml(midi, "quarter", tpc) for midi, tpc in chords
+        )
+
+    return _MSCX_MULTI % (
+        m([(62, 16), (65, 25), (66, 20), (67, 15)])
+        + m([(69, 17), (71, 19), (73, 21), (74, 16)])
+        + m([(76, 18), (78, 20), (79, 15), (81, 17)])
+    )
+
+
+def _chromatic_sharp_score():
+    return _build_score([
+        [("D4", 1), ("E#4", 1), ("F#4", 1), ("G4", 1)],
+        [("A4", 1), ("B4", 1), ("C#5", 1), ("D5", 1)],
+        [("E5", 1), ("F#5", 1), ("G5", 1), ("A5", 1)],
+    ])
+
+
 def _music21_labels(score):
     out = []
     for n in score.recurse().notes:
@@ -188,13 +282,13 @@ def _music21_labels(score):
     return out
 
 
-def _mscz_labels(path):
+def _mscz_labels(path, key_sharps):
     with zipfile.ZipFile(str(path)) as z:
         name = next(n for n in z.namelist() if n.endswith(".mscx"))
         root = ET.fromstring(z.read(name))
     score_el = root.find(".//Score")
     staves = [c for c in score_el if c.tag == "Staff"]
-    parts = mscz_inject._collect_events(staves, -3)
+    parts = mscz_inject._collect_events(staves, key_sharps)
     out = []
     for ev in parts[0]:
         if ev.is_rest:
@@ -222,6 +316,54 @@ def test_guided_labels_same_notes_and_spelling_both_paths(tmp_path):
         str(src), str(out), profile_name="guided", key_info=key_info,
     )
 
-    assert _mscz_labels(out) == m21_labels
+    assert _mscz_labels(out, -3) == m21_labels
     # First note and the re-entry, spelled as flats in a flat key.
     assert [text for *_, text in m21_labels] == ["Eb", "Ab"]
+
+
+def test_chromatic_flat_spells_same_both_paths(tmp_path):
+    """A Db in Eb major stays Db through both paths (acceptance criterion 2)."""
+    key_info = {"sharps_flats_count": -3}
+
+    src = tmp_path / "chromatic_flat.mscz"
+    with zipfile.ZipFile(str(src), "w") as z:
+        z.writestr("chromatic_flat.mscx", _chromatic_flat_mscx())
+
+    out = tmp_path / "chromatic_flat_out.mscz"
+    mscz_inject.inject_mscz(
+        str(src), str(out), profile_name="guided", key_info=key_info,
+    )
+    mscz_labels = _mscz_labels(out, -3)
+
+    annotated = annotate.annotate_score(
+        _chromatic_flat_score(), get_profile("guided"), key_info=key_info,
+    )
+    m21_labels = _music21_labels(annotated)
+
+    assert mscz_labels == m21_labels
+    # First note plus the first chromatic flat: Db, never C#.
+    assert [text for *_, text in mscz_labels] == ["Eb", "Db"]
+
+
+def test_chromatic_sharp_spells_same_both_paths(tmp_path):
+    """An E# in D major stays E# through both paths."""
+    key_info = {"sharps_flats_count": 2}
+
+    src = tmp_path / "chromatic_sharp.mscz"
+    with zipfile.ZipFile(str(src), "w") as z:
+        z.writestr("chromatic_sharp.mscx", _chromatic_sharp_mscx())
+
+    out = tmp_path / "chromatic_sharp_out.mscz"
+    mscz_inject.inject_mscz(
+        str(src), str(out), profile_name="guided", key_info=key_info,
+    )
+    mscz_labels = _mscz_labels(out, 2)
+
+    annotated = annotate.annotate_score(
+        _chromatic_sharp_score(), get_profile("guided"), key_info=key_info,
+    )
+    m21_labels = _music21_labels(annotated)
+
+    assert mscz_labels == m21_labels
+    # First note plus the first chromatic sharp: E#, never F.
+    assert [text for *_, text in mscz_labels] == ["D", "E#"]

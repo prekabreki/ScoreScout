@@ -6,8 +6,9 @@ Preserves MuseScore's original layout by modifying the XML inside the
 Flow:
   1. The caller passes the score's key and chord analysis alongside the .mscz.
   2. This module unzips the .mscz and walks the XML, building the shared
-     ``PartEvent`` stream: it converts MuseScore MIDI ints to key-spelled
-     music21 pitches and tracks (measure, beat) through tuplets and grace notes.
+     ``PartEvent`` stream: it spells each MuseScore note from its ``<tpc>``
+     (or the key signature when absent) and tracks (measure, beat) through
+     tuplets and grace notes.
   3. ``export.labeling`` selects the notes the profile wants and computes the
      label text, and this module writes them back as <Lyrics> elements.
   4. The modified .mscz is re-zipped and rendered via MuseScore CLI.
@@ -28,6 +29,7 @@ from pathlib import Path
 from export.labeling import (
     PartEvent,
     label_for,
+    pitch_from_tpc,
     select_labels,
     spell_midi,
 )
@@ -198,6 +200,35 @@ def inject_mscz(
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def _chord_pitches(chord_el: ET.Element, key_sharps: int) -> list:
+    """Spell a ``<Chord>``'s notes from their ``<tpc>``, falling back to the key.
+
+    MuseScore writes each note's exact spelling as a ``<tpc>`` child of
+    ``<Note>``; using it keeps the .mscz path's enharmonics identical to the
+    music21 path, which reads spelled notes out of the source. Older files with
+    no ``<tpc>`` fall back to key-signature spelling via :func:`spell_midi`.
+    """
+    spelled = []
+    for note_el in chord_el.findall("Note"):
+        pitch_el = note_el.find("pitch")
+        if pitch_el is None or not pitch_el.text:
+            continue
+        midi = int(pitch_el.text)
+        tpc_el = note_el.find("tpc")
+        tpc = None
+        if tpc_el is not None and tpc_el.text:
+            try:
+                tpc = int(tpc_el.text)
+            except ValueError:
+                tpc = None
+        spelled.append(
+            pitch_from_tpc(tpc, midi) if tpc is not None
+            else spell_midi(midi, key_sharps)
+        )
+    spelled.sort(key=lambda p: p.midi)
+    return spelled
+
+
 def _collect_events(
     content_staves: list[ET.Element],
     key_sharps: int,
@@ -253,10 +284,7 @@ def _collect_events(
                         ratio *= tuplet
 
                     if elem.tag == "Chord":
-                        midis = sorted(
-                            int(p.text) for p in elem.findall("Note/pitch") if p.text
-                        )
-                        pitches = [spell_midi(m, key_sharps) for m in midis]
+                        pitches = _chord_pitches(elem, key_sharps)
                         dur = _dur_quarters(elem, ratio)
                         events.append(PartEvent(
                             pitches, measure_num, beat, dur, target=elem,

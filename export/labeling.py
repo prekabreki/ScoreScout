@@ -12,9 +12,10 @@ This module owns both decisions:
   operating on a normalized :class:`PartEvent` stream that either path can
   build (music21 notes/chords, or XML ``Chord``/``Rest`` elements).
 
-The .mscz path keeps only its output adapter: it converts MuseScore MIDI ints
-to spelled music21 pitches with :func:`spell_midi`, then labels through the
-same two functions as the music21 path.
+The .mscz path keeps only its output adapter: it spells each MuseScore note
+from its ``<tpc>`` (exact spelling) with :func:`pitch_from_tpc`, falling back to
+:func:`spell_midi` when no tpc is present, then labels through the same two
+functions as the music21 path.
 """
 
 from __future__ import annotations
@@ -167,8 +168,9 @@ def spell_midi(midi: int, key_sharps: int = 0) -> m21pitch.Pitch:
     Diatonic pitch classes take the key signature's spelling, so a flat-key
     piece prints ``Ab`` rather than music21's default ``G#``. Chromatic pitch
     classes keep music21's default MIDI spelling so the accidental stays
-    explicit. This is what lets the .mscz path agree with the music21 path,
-    which reads spelled notes straight out of the source.
+    explicit. This is the fallback when MuseScore did not write a ``<tpc>``
+    (see :func:`pitch_from_tpc`), and it is what lets the .mscz path agree with
+    the music21 path, which reads spelled notes straight out of the source.
     """
     octave = (midi // 12) - 1
     if key_sharps:
@@ -178,6 +180,33 @@ def spell_midi(midi: int, key_sharps: int = 0) -> m21pitch.Pitch:
             p.octave = octave
             return p
     return m21pitch.Pitch(midi=midi)
+
+
+# MuseScore writes a tonal pitch class ("tpc") on the line of fifths with C at
+# 14; letter and accidental follow straight from the offset, so a Db in a flat
+# key stays Db even though its MIDI int would default to C#.
+_TPC_LETTERS = "FCGDAEB"
+# Semitones above C within an octave for each natural letter (scientific pitch).
+_LETTER_SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def pitch_from_tpc(tpc: int, midi: int) -> m21pitch.Pitch:
+    """Spell a MuseScore ``<tpc>`` at its sounding MIDI pitch.
+
+    ``tpc`` is MuseScore's exact spelling as a position on the line of fifths
+    (14 = C, 15 = G, 13 = F, 12 = Bb, 11 = Eb, 9 = Db, 21 = C#, 20 = F#, ...).
+    That preserves the source's enharmonic spelling, which a bare MIDI int
+    cannot. The octave comes from the MIDI pitch but is recomputed against the
+    spelled letter, so edge spellings that cross C keep the right octave: a
+    B#3 sounds as MIDI 60 and a Cb4 as MIDI 59.
+    """
+    letter = _TPC_LETTERS[(tpc + 1) % 7]
+    alter = (tpc + 1) // 7 - 2
+    accidental = "#" * alter if alter > 0 else "-" * -alter
+    octave = (midi - _LETTER_SEMITONES[letter] - alter) // 12 - 1
+    p = m21pitch.Pitch(letter + accidental)
+    p.octave = octave
+    return p
 
 
 # ---------------------------------------------------------------------------
