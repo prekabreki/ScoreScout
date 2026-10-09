@@ -36,24 +36,58 @@ _DUR_MAP = {
 
 NOTE_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
+# MuseScore marks a grace chord with one of these child tags; it sounds with
+# zero metrical duration, so it must not advance the running beat counter.
+_GRACE_TAGS = frozenset({
+    "acciaccatura", "appoggiatura",
+    "grace4", "grace16", "grace32",
+    "grace8after", "grace16after", "grace32after",
+})
 
-def _dur_quarters(chord_el: ET.Element) -> float:
+
+def _is_grace_chord(chord_el: ET.Element) -> bool:
+    """True if the chord carries a MuseScore grace-note marker."""
+    return any(child.tag in _GRACE_TAGS for child in chord_el)
+
+
+def _tuplet_ratio(tuplet_el: ET.Element) -> float:
+    """Duration multiplier for notes inside a <Tuplet> element.
+
+    MuseScore writes the tuplet's ``actualNotes`` (how many are played) and
+    ``normalNotes`` (how many the written value would normally be) as child
+    elements. A note inside a 3:2 triplet therefore lasts
+    ``normalNotes / actualNotes`` of its written duration. Returns 1.0 when
+    the ratio is absent or unusable.
+    """
+    actual_el = tuplet_el.find("actualNotes")
+    normal_el = tuplet_el.find("normalNotes")
+    if actual_el is None or normal_el is None:
+        return 1.0
+    try:
+        actual = float(actual_el.text)
+        normal = float(normal_el.text)
+    except (TypeError, ValueError):
+        return 1.0
+    if actual <= 0 or normal <= 0:
+        return 1.0
+    return normal / actual
+
+
+def _dur_quarters(chord_el: ET.Element, tuplet_ratio: float = 1.0) -> float:
     """Calculate duration in quarter-note units from a Chord/Rest element.
 
-    KNOWN LIMITATION (audit M4): this accounts for durationType + dots only.
-    It does NOT scale by tuplet ratio (MuseScore encodes tuplets via separate
-    <Tuplet> elements carrying actualNotes/normalNotes, applied to the chords
-    in between), nor does it special-case grace notes (which sound with zero
-    metrical duration). As a result, the running beat counter in
-    _inject_chord_labels drifts after any triplet/tuplet or grace note, so
-    chord-name lookups keyed on (measure, beat) can miss for the rest of that
-    measure. Fixing this correctly means parsing the <Tuplet> open/close
-    markers and the <grace*> tags and is layout-sensitive; deferred rather
-    than guessed. The music21 export path (export/annotate.py) is unaffected.
+    Accounts for durationType + dots, scales by the enclosing tuplet ratio
+    (``tuplet_ratio``, from ``_tuplet_ratio``), and returns 0.0 for grace
+    notes, which carry no metrical duration. This keeps the running beat
+    counter in ``_inject_full`` aligned with music21 so (measure, beat)-keyed
+    chord-name lookups land on the right notes. The music21 export path
+    (export/annotate.py) is unaffected.
     """
+    if _is_grace_chord(chord_el):
+        return 0.0
     dur_type = chord_el.find("durationType")
     if dur_type is None:
-        return 1.0
+        return 1.0 * tuplet_ratio
     base = _DUR_MAP.get(dur_type.text, 1.0)
     dots_el = chord_el.find("dots")
     dots = int(dots_el.text) if dots_el is not None else 0
@@ -62,7 +96,7 @@ def _dur_quarters(chord_el: ET.Element) -> float:
     for _ in range(dots):
         add /= 2
         total += add
-    return total
+    return total * tuplet_ratio
 
 
 def _label_for_chord_with_analysis(
@@ -248,8 +282,24 @@ def _inject_full(
 
             for voice in voices:
                 beat = 1.0  # beat position (1-indexed like music21)
+                # Nested tuplets are written as <Tuplet> ... <Tuplet> ... and
+                # closed innermost-first with <endTuplet/>; the stack multiplies
+                # their ratios together.
+                tuplet_stack: list[float] = []
 
                 for elem in voice:
+                    if elem.tag == "Tuplet":
+                        tuplet_stack.append(_tuplet_ratio(elem))
+                        continue
+                    if elem.tag == "endTuplet":
+                        if tuplet_stack:
+                            tuplet_stack.pop()
+                        continue
+
+                    ratio = 1.0
+                    for tuplet in tuplet_stack:
+                        ratio *= tuplet
+
                     if elem.tag == "Chord":
                         label = _label_for_chord_with_analysis(
                             elem, octaves, chord_info, measure_num, beat,
@@ -267,9 +317,9 @@ def _inject_full(
                             elem.insert(note_idx, lyrics)
                             count += 1
 
-                        beat += _dur_quarters(elem)
+                        beat += _dur_quarters(elem, ratio)
 
                     elif elem.tag == "Rest":
-                        beat += _dur_quarters(elem)
+                        beat += _dur_quarters(elem, ratio)
 
     return count
