@@ -270,8 +270,6 @@ def _inject_guided_chord_symbols(score: Score, chord_info: dict) -> None:
 
 def _inject_difficulty_markers(score: Score, difficulty_info: dict) -> None:
     """Add text markers at hard sections instead of per-note coloring."""
-    component = difficulty_info.get("component_scores", {})
-    overall = difficulty_info.get("overall_difficulty", 0)
 
     # We don't have per-section difficulty yet, so use a simpler approach:
     # scan for locally difficult passages and mark them

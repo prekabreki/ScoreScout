@@ -4,8 +4,6 @@ Each test pins a specific correctness fix so the behavior can't silently
 regress. No network: ANTHROPIC_API_KEY is empty in CI and no LLM path runs.
 """
 
-from pathlib import Path
-
 import pytest
 from music21 import stream, note, meter, tempo, pitch
 

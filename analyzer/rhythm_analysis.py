@@ -161,8 +161,6 @@ def _compress_tempo_marks(tempos: list[dict]) -> list[dict]:
 
         # Extend run while direction is consistent and measures are close
         while i < len(tempos) and tempos[i].get("bpm") is not None:
-            prev_bpm = tempos[i - 1]["bpm"]
-            curr_bpm = tempos[i]["bpm"]
             prev_m = tempos[i - 1].get("measure") or 0
             curr_m = tempos[i].get("measure") or 0
 
