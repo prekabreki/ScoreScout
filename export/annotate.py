@@ -68,6 +68,16 @@ def annotate_score(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _bpm(mark):
+    """The mark's tempo in quarter notes per minute, or None for text-only marks.
+
+    ``getQuarterBPM`` reads the sounding number when there is no written one
+    (MuseScore exports hidden playback tempos that way, so ``.number`` alone is
+    None for most marks in such scores) and converts non-quarter referents.
+    """
+    return mark.getQuarterBPM()
+
+
 def _strip_granular_tempos(score: Score) -> None:
     """Remove fractional-BPM metronome marks (interpolated accel/rit) and
     collapse monotonic runs of 3+ integer-BPM marks to just first and last."""
@@ -78,7 +88,8 @@ def _strip_granular_tempos(score: Score) -> None:
     removed = 0
     # Pass 1: remove fractional BPM marks (e.g. 127.5, 110.3)
     for m in marks:
-        if m.number is not None and m.number != int(m.number):
+        bpm = _bpm(m)
+        if bpm is not None and bpm != int(bpm):
             removed += _remove_mark(m)
 
     # Pass 2: collapse monotonic runs of integer marks
@@ -92,12 +103,12 @@ def _strip_granular_tempos(score: Score) -> None:
         run = [remaining[i]]
         j = i + 1
         while j < len(remaining):
-            prev_bpm = run[-1].number
-            curr_bpm = remaining[j].number
+            prev_bpm = _bpm(run[-1])
+            curr_bpm = _bpm(remaining[j])
             if prev_bpm is None or curr_bpm is None:
                 break
             if len(run) >= 2:
-                prev_dir = run[-1].number - run[-2].number
+                prev_dir = prev_bpm - _bpm(run[-2])
                 curr_dir = curr_bpm - prev_bpm
                 if (prev_dir > 0 and curr_dir > 0) or (prev_dir < 0 and curr_dir < 0):
                     run.append(remaining[j])
@@ -120,7 +131,12 @@ def _strip_granular_tempos(score: Score) -> None:
     if len(remaining) > TEMPO_RUN_MIN_LEN:
         last_kept = remaining[0]
         for mark in remaining[1:]:
-            bpm_diff = abs(mark.number - last_kept.number)
+            if _bpm(mark) is None:
+                continue  # text-only mark: nothing to compare, keep it
+            if _bpm(last_kept) is None:
+                last_kept = mark
+                continue
+            bpm_diff = abs(_bpm(mark) - _bpm(last_kept))
             measure_diff = abs(mark.measureNumber - last_kept.measureNumber)
             if bpm_diff <= TEMPO_PROXIMITY_BPM and measure_diff < TEMPO_PROXIMITY_MEASURES:
                 removed += _remove_mark(mark)
