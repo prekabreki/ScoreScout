@@ -41,6 +41,11 @@ def test_label_for_dyad_collapses_octave_duplicate():
     assert labeling.label_for(dyad) == "C"
 
 
+def test_label_for_dyad_keeps_octave_duplicate_when_octaves_shown():
+    dyad = [pitch.Pitch("G5"), pitch.Pitch("G6")]
+    assert labeling.label_for(dyad, octaves=True) == "G5/G6"
+
+
 def test_label_for_dyad_shows_both_pitches():
     dyad = [pitch.Pitch("C4"), pitch.Pitch("E4")]
     assert labeling.label_for(dyad) == "C/E"

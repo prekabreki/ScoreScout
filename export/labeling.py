@@ -109,7 +109,7 @@ def label_for(
 
     ``pitches`` is any iterable of music21 ``Pitch`` objects. The single source
     of truth for both export paths: a 3+ note chord prefers an analyzed chord
-    name, a dyad shows both notes (collapsing an octave/pitch-class duplicate),
+    name, a dyad shows both notes (collapsing an octave duplicate unless octaves are shown),
     and a single note shows its spelled name.
     """
     if not pitches:
@@ -122,7 +122,9 @@ def label_for(
     if count == 1:
         return names[0]
     if count == 2:
-        if ordered[0].pitchClass == ordered[1].pitchClass:
+        # An octave doubling reads as one note, unless octave numbers are
+        # shown: then "G5" alone would hide which G the upper note is.
+        if names[0] == names[1]:
             return names[0]
         return "/".join(names)
 
