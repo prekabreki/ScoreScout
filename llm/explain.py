@@ -2,9 +2,8 @@
 
 import logging
 
-import anthropic
-
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, MAX_TOKENS
+from llm.client import get_client
 from llm.prompt import SYSTEM_PROMPT, format_analysis_for_llm
 
 log = logging.getLogger(__name__)
@@ -20,12 +19,12 @@ def generate_explanation(analysis: dict) -> str | None:
     log.info("Sending analysis to Claude API (%s)...", CLAUDE_MODEL)
     log.debug("Prompt payload size: %d chars", len(compact_json))
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = get_client()
 
     try:
-        # Conservative per-request timeout (audit L12) so a hung/slow API call
-        # can't stall the whole analysis indefinitely.
-        message = client.with_options(timeout=60.0).messages.create(
+        # The shared client applies a conservative per-request timeout (audit
+        # L12) so a hung/slow API call can't stall the whole analysis.
+        message = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=MAX_TOKENS,
             system=SYSTEM_PROMPT,

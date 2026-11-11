@@ -19,6 +19,7 @@ from analyzer.stats import analyze_stats
 from analyzer.structure import analyze_structure
 from analyzer.difficulty import analyze_difficulty
 from analyzer.note_annotations import generate_annotations
+from llm.chord_names import identify_chords
 
 log = logging.getLogger("sheet_music_analyzer")
 
@@ -53,7 +54,12 @@ def run_analysis(
     key_info = analyze_key(score)
     rhythm_info = analyze_rhythm(score)
     stats_info = analyze_stats(score)
-    chord_info = analyze_chords(score, key_info, use_llm=use_llm)
+    chord_info = analyze_chords(
+        score,
+        key_info,
+        use_llm=use_llm,
+        chord_namer=identify_chords if use_llm else None,
+    )
     structure_info = analyze_structure(score)
     difficulty_info = analyze_difficulty(score, rhythm_info, stats_info, key_info)
     annotations = generate_annotations(score)
