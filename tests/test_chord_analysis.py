@@ -87,3 +87,24 @@ def test_analyze_chords_excludes_verbose_interval_names():
     assert all(" above " not in n for n in result["unique_chords"])
     for entry in result["chord_progression_full"]:
         assert " above " not in entry["name"]
+
+
+@pytest.mark.parametrize(
+    "pitches, expected",
+    [
+        (["C4", "E4", "G4"], "C"),
+        (["F3", "A3", "C4"], "F"),
+        (["G3", "B3", "D4", "F4"], "G7"),
+        (["E3", "G3", "C4"], "C/E"),
+    ],
+)
+def test_tier1_names_against_real_bass(pitches, expected):
+    """Tier 1 must voice above the real bass, not the lowest pitch class (#33)."""
+    s = stream.Score()
+    part = stream.Part()
+    part.append(m21chord.Chord(pitches, quarterLength=1.0))
+    s.insert(0, part)
+
+    result = analyze_chords(s, {"detected_key": "C major"}, use_llm=False)
+
+    assert result["unique_chords"] == [expected]
