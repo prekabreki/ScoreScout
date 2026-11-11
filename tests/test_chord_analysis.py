@@ -96,6 +96,9 @@ def test_analyze_chords_excludes_verbose_interval_names():
         (["F3", "A3", "C4"], "F"),
         (["G3", "B3", "D4", "F4"], "G7"),
         (["E3", "G3", "C4"], "C/E"),
+        (["G4", "B4", "D5"], "G"),
+        (["A4", "C5", "E5"], "Am"),
+        (["E4", "G4", "C5"], "C/E"),
     ],
 )
 def test_tier1_names_against_real_bass(pitches, expected):

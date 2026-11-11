@@ -69,7 +69,7 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
         for pc in sorted(pcs):
             if pc == bass_pc:
                 continue
-            p = m21pitch.Pitch(pc)
+            p = m21pitch.Pitch(pc, octave=bass.octave)
             while p.midi <= bass.midi:
                 p.octave += 1
             voiced.append(p)
