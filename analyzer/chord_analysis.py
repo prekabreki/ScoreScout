@@ -60,9 +60,20 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
         name = m21pitch.Pitch(next(iter(pcs))).name
         return name, "", "harmony"
 
-    # Tier 1: music21 harmony (on normalized chord — single octave, no doublings)
+    # Tier 1: music21 harmony (on a voicing above the chord's real bass,
+    # de-duplicated to one pitch per class so doublings don't skew the symbol).
     try:
-        normalized = m21chord.Chord([m21pitch.Pitch(pc) for pc in sorted(pcs)])
+        bass = m21pitch.Pitch(ch.bass().midi)
+        bass_pc = bass.midi % 12
+        voiced = [bass]
+        for pc in sorted(pcs):
+            if pc == bass_pc:
+                continue
+            p = m21pitch.Pitch(pc, octave=bass.octave)
+            while p.midi <= bass.midi:
+                p.octave += 1
+            voiced.append(p)
+        normalized = m21chord.Chord(voiced)
         cs = harmony.chordSymbolFromChord(normalized)
         if cs.figure and "Cannot Be Identified" not in cs.figure:
             rn = _try_roman(ch, key_obj)
