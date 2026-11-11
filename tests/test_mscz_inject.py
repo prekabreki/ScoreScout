@@ -56,6 +56,26 @@ def _labels(mscz_path) -> list[str | None]:
     return result
 
 
+def _lyrics_verses(mscz_path) -> list[list[tuple[int, str | None]]]:
+    """Return each chord's (verse, text) lyrics, in document order.
+
+    A ``<Lyrics>`` without a ``<no>`` child is verse 0.
+    """
+    with zipfile.ZipFile(str(mscz_path)) as z:
+        name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        root = ET.fromstring(z.read(name))
+    result = []
+    for chord in root.iter("Chord"):
+        verses = []
+        for lyrics in chord.findall("Lyrics"):
+            no_el = lyrics.find("no")
+            verse = int(no_el.text) if no_el is not None and no_el.text else 0
+            text_el = lyrics.find("text")
+            verses.append((verse, text_el.text if text_el is not None else None))
+        result.append(verses)
+    return result
+
+
 def _progression() -> dict:
     return {
         "chord_progression_full": [
@@ -104,6 +124,47 @@ def test_plain_measure_beats_unchanged(tmp_path):
     mscz_inject.inject_mscz(str(src), str(out), chord_info=_progression())
 
     assert _labels(out) == ["C", "G", "C7"]
+
+
+def test_label_uses_free_lyric_verse(tmp_path):
+    """A chord that already has a verse-1 lyric gets the label on verse 2."""
+    chord = (
+        "<Chord>"
+        + _note(60) + _note(64) + _note(67)
+        + "<durationType>quarter</durationType>"
+        + "<Lyrics><text>Hel-</text></Lyrics>"
+        + "</Chord>"
+    )
+    src = _build_mscz(tmp_path, chord)
+    out = tmp_path / "annotated.mscz"
+
+    mscz_inject.inject_mscz(
+        str(src), str(out),
+        chord_info={"chord_progression_full": [
+            {"measure": 1, "beat": 1.0, "name": "C"},
+        ]},
+    )
+
+    assert sorted(_lyrics_verses(out)[0]) == [(0, "Hel-"), (1, "C")]
+
+
+def test_label_omits_verse_number_when_zero(tmp_path):
+    """A chord with no lyrics keeps its label on verse 0 with no <no> child."""
+    src = _build_mscz(tmp_path, _chord("quarter", [60, 64, 67]))
+    out = tmp_path / "annotated.mscz"
+
+    mscz_inject.inject_mscz(
+        str(src), str(out),
+        chord_info={"chord_progression_full": [
+            {"measure": 1, "beat": 1.0, "name": "C"},
+        ]},
+    )
+
+    assert _lyrics_verses(out) == [[(0, "C")]]
+    with zipfile.ZipFile(str(out)) as z:
+        name = next(n for n in z.namelist() if n.endswith(".mscx"))
+        root = ET.fromstring(z.read(name))
+    assert root.find(".//Chord/Lyrics/no") is None
 
 
 def test_dur_quarters_scales_tuplet_and_zeroes_grace():
