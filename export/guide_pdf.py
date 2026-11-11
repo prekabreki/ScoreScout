@@ -216,7 +216,7 @@ def render_chord_guide_pdf(chord_info: dict, output_path: str,
                             key_info: dict | None = None,
                             title: str = "Chord Reference") -> str:
     """Render a chord reference as a compact two-column single-page PDF."""
-    from export.labeling import _fix_flats
+    from analyzer.spelling import display_name
     title = _sanitize(title) or "Chord Reference"
     top_chords = _get_top_chords(chord_info, max_chords=12)
     if not top_chords:
@@ -235,10 +235,14 @@ def render_chord_guide_pdf(chord_info: dict, output_path: str,
     pdf.set_text_color(255, 255, 255)
     title_line = title
     if key_info:
-        detected = key_info.get("detected_key", "")
+        detected = display_name(key_info.get("detected_key", "") or "")
         mode = key_info.get("detected_mode", "")
         if detected:
-            title_line += f"   |   Key: {detected} {mode}".strip()
+            # detected_key already ends in its mode ("Bb major"); only append
+            # the mode when the key string does not already carry it.
+            if mode and mode.lower() not in detected.lower().split():
+                detected = f"{detected} {mode}"
+            title_line += f"   |   Key: {detected}"
     pdf.cell(0, 10, title_line)
 
     # Subtitle
@@ -283,7 +287,7 @@ def render_chord_guide_pdf(chord_info: dict, output_path: str,
         pdf.rect(col_x, card_y, col_w, card_h, style="F")
 
         # Chord name (large) — fix music21 flat notation for display
-        display_symbol = _fix_flats(symbol)
+        display_symbol = display_name(symbol)
         pdf.set_xy(col_x + 3, card_y + 1)
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(40, 40, 40)

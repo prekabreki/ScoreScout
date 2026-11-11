@@ -4,6 +4,8 @@ import logging
 
 from music21.stream import Score
 
+from analyzer.spelling import display_name
+
 log = logging.getLogger(__name__)
 
 
@@ -23,8 +25,8 @@ def generate_annotations(score: Score) -> dict:
 
             for n in measure.notes:
                 if n.isChord:
-                    pitch_names = [p.nameWithOctave for p in n.pitches]
-                    letters = [p.name for p in n.pitches]
+                    pitch_names = [display_name(p.nameWithOctave) for p in n.pitches]
+                    letters = [display_name(p.name) for p in n.pitches]
                     notes_in_measure.append({
                         "beat": float(n.beat) if n.beat else 1.0,
                         "pitches": pitch_names,
@@ -34,7 +36,7 @@ def generate_annotations(score: Score) -> dict:
                 else:
                     notes_in_measure.append({
                         "beat": float(n.beat) if n.beat else 1.0,
-                        "pitches": [n.pitch.nameWithOctave],
+                        "pitches": [display_name(n.pitch.nameWithOctave)],
                         "duration": n.duration.type,
                         "is_chord": False,
                     })

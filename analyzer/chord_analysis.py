@@ -10,6 +10,7 @@ from music21 import chord as m21chord, harmony, pitch as m21pitch, roman
 
 from analyzer.chord_shapes import lookup_chord, format_chord_symbol
 from analyzer.key_analysis import key_from_string
+from analyzer.spelling import display_name
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def _normalize_to_pitch_classes(ch) -> set[int]:
 def _pitch_classes_to_label(pcs: set[int]) -> str:
     """Format a set of pitch classes as a readable label like '[C E G#]'."""
     names = sorted(
-        (m21pitch.Pitch(pc).name for pc in pcs),
+        (display_name(m21pitch.Pitch(pc).name) for pc in pcs),
         key=lambda n: m21pitch.Pitch(n).midi % 12,
     )
     return "[" + " ".join(names) + "]"
@@ -57,7 +58,7 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
     """
     # Single pitch class = unison, just name the note
     if len(pcs) == 1:
-        name = m21pitch.Pitch(next(iter(pcs))).name
+        name = display_name(m21pitch.Pitch(next(iter(pcs))).name)
         return name, "", "harmony"
 
     # Tier 1: music21 harmony (on a voicing above the chord's real bass,
@@ -77,7 +78,7 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
         cs = harmony.chordSymbolFromChord(normalized)
         if cs.figure and "Cannot Be Identified" not in cs.figure:
             rn = _try_roman(ch, key_obj)
-            return cs.figure, rn, "harmony"
+            return display_name(cs.figure), rn, "harmony"
     except Exception:
         pass
 
@@ -91,7 +92,7 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
                 # unusual voicings; keep the compact Roman figure instead.
                 if _is_verbose_interval_name(name):
                     name = rn.figure
-                return name, rn.figure, "roman"
+                return display_name(name), rn.figure, "roman"
         except Exception:
             pass
 
@@ -101,7 +102,7 @@ def _identify_chord_tiered(ch, pcs: set[int], key_obj) -> tuple[str, str, str]:
         root, quality = result
         symbol = format_chord_symbol(root, quality)
         rn = _try_roman(ch, key_obj)
-        return symbol, rn, "lookup"
+        return display_name(symbol), rn, "lookup"
 
     # Not identified — will be collected for Tier 4 (batch Claude) or Tier 5 (fallback)
     return "", "", "unidentified"
@@ -293,6 +294,7 @@ def analyze_chords(score: Score, key_info: dict, use_llm: bool = True) -> dict:
             claude_name = claude_results.get(label)
 
             if claude_name and claude_name != "?":
+                claude_name = display_name(claude_name)
                 chord_names[idx] = claude_name
                 chord_progression[idx]["name"] = claude_name
                 tier_counts["claude"] += 1
