@@ -8,10 +8,10 @@ client construction raise; the analysis must still complete.
 import pytest
 from music21 import chord as m21chord, stream
 
-import analyzer.chord_analysis as ca
+import llm.chord_names as chord_names
+import llm.client as llm_client
 from analyzer.chord_analysis import (
     analyze_chords,
-    _batch_identify_with_claude,
     _identify_chord_tiered,
     _normalize_to_pitch_classes,
 )
@@ -23,12 +23,19 @@ def _explode(*args, **kwargs):
 
 
 def test_analyze_chords_no_llm_never_constructs_client(monkeypatch, grand_staff_score):
-    # Even with a key set, client construction would blow up if reached.
-    monkeypatch.setattr(ca, "ANTHROPIC_API_KEY", "dummy-key")
-    monkeypatch.setattr(ca.anthropic, "Anthropic", _explode)
+    # Even with a key set (and a namer supplied), client construction would
+    # blow up if reached.
+    monkeypatch.setattr(llm_client, "ANTHROPIC_API_KEY", "dummy-key")
+    monkeypatch.setattr(llm_client.anthropic, "Anthropic", _explode)
+    monkeypatch.setattr(chord_names, "ANTHROPIC_API_KEY", "dummy-key")
 
     key_info = analyze_key(grand_staff_score)
-    result = analyze_chords(grand_staff_score, key_info, use_llm=False)
+    result = analyze_chords(
+        grand_staff_score,
+        key_info,
+        use_llm=False,
+        chord_namer=chord_names.identify_chords,
+    )
 
     assert isinstance(result, dict)
     assert result["total_chords"] >= 1
@@ -36,16 +43,16 @@ def test_analyze_chords_no_llm_never_constructs_client(monkeypatch, grand_staff_
     assert result["identification_stats"].get("claude", 0) == 0
 
 
-def test_batch_identify_disabled_returns_empty_with_key_set(monkeypatch):
-    monkeypatch.setattr(ca, "ANTHROPIC_API_KEY", "dummy-key")
-    monkeypatch.setattr(ca.anthropic, "Anthropic", _explode)
+def test_identify_chords_empty_key_returns_empty_without_client(monkeypatch):
+    monkeypatch.setattr(chord_names, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(llm_client.anthropic, "Anthropic", _explode)
 
     batch = [{
         "pitch_classes_label": "[C E G]",
         "pitches": ["C4", "E4", "G4"],
         "measure": 1,
     }]
-    assert _batch_identify_with_claude(batch, "C major", use_llm=False) == {}
+    assert chord_names.identify_chords(batch, "C major") == {}
 
 
 # music21's RomanNumeral.pitchedCommonName degrades to verbose interval prose

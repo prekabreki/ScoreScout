@@ -1,17 +1,14 @@
 """Chord analysis — tiered identification pipeline, progression tracking."""
 
-import json
 import logging
 from collections import Counter
 
-import anthropic
 from music21.stream import Score
 from music21 import chord as m21chord, harmony, pitch as m21pitch, roman
 
 from analyzer.chord_shapes import lookup_chord, format_chord_symbol
 from analyzer.key_analysis import key_from_string
 from analyzer.spelling import display_name
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -120,103 +117,25 @@ def _try_roman(ch, key_obj) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tier 4: Batch Claude API fallback
-# ---------------------------------------------------------------------------
-
-def _batch_identify_with_claude(
-    unidentified: list[dict], key_context: str, use_llm: bool = True
-) -> dict[str, str]:
-    """Send unidentified chords to Claude in one batch call.
-
-    Args:
-        unidentified: list of {pitch_classes_label, measure, pitches}
-        key_context: e.g. "e minor"
-        use_llm: when False, makes no network call and returns {} (Tier 4 disabled)
-
-    Returns:
-        dict mapping pitch_classes_label -> identified chord name
-    """
-    if not use_llm:
-        log.info("Tier 4: skipped (LLM disabled)")
-        return {}
-    if not ANTHROPIC_API_KEY or not unidentified:
-        return {}
-
-    # Deduplicate by pitch class label
-    unique_sets = {}
-    for entry in unidentified:
-        label = entry["pitch_classes_label"]
-        if label not in unique_sets:
-            unique_sets[label] = entry["pitches"]
-
-    if not unique_sets:
-        return {}
-
-    log.info("Tier 4: sending %d unique unidentified chords to Claude", len(unique_sets))
-
-    prompt_data = [
-        {"pitches": pitches, "label": label}
-        for label, pitches in unique_sets.items()
-    ]
-
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
-            system=(
-                "You are a music theory expert. Identify each chord from its pitches. "
-                "Return ONLY a JSON object mapping each label to a chord symbol "
-                '(e.g., {"[C E G]": "C", "[D F# A C]": "D7"}). '
-                'Use "?" for genuinely unidentifiable chords.'
-            ),
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Key context: {key_context}\n\n"
-                    f"Identify these chords:\n{json.dumps(prompt_data)}"
-                ),
-            }],
-        )
-
-    except Exception as e:
-        log.warning("Tier 4 Claude API call failed: %s — falling back to lower tiers", e)
-        return {}
-
-    # Find the first text block rather than blindly indexing content[0].
-    text = ""
-    for block in getattr(message, "content", None) or []:
-        block_text = getattr(block, "text", None)
-        if block_text:
-            text = block_text.strip()
-            break
-    if not text:
-        log.warning("Tier 4 Claude response had no text content — falling back to lower tiers")
-        return {}
-
-    # Extract JSON from response (may be wrapped in markdown code block)
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    try:
-        result = json.loads(text)
-    except json.JSONDecodeError as e:
-        log.warning("Tier 4 Claude response was not valid JSON (%s); raw text: %r", e, text)
-        return {}
-
-    log.debug("Tier 4 Claude response: %d chords identified", len(result))
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Main analysis function
 # ---------------------------------------------------------------------------
 
-def analyze_chords(score: Score, key_info: dict, use_llm: bool = True) -> dict:
+def analyze_chords(
+    score: Score,
+    key_info: dict,
+    use_llm: bool = True,
+    chord_namer=None,
+) -> dict:
     """Analyze chords with tiered identification pipeline.
 
-    When use_llm is False (or no API key is set), the Tier-4 Claude batch call
-    is skipped entirely — no network request is made — and unidentified chords
-    degrade to their pitch-class labels (Tier 5).
+    When use_llm is False (or no chord_namer is supplied), the Tier-4 Claude
+    batch call is skipped entirely — no network request is made — and
+    unidentified chords degrade to their pitch-class labels (Tier 5).
+
+    ``chord_namer`` is the Tier-4 callable, e.g.
+    ``llm.chord_names.identify_chords(unidentified, key_context) -> dict``.
+    It is injected by ``core.pipeline.run_analysis`` so this module stays free
+    of Anthropic/config imports.
     """
     log.info("Running chord analysis...")
     log.debug("Chordifying score...")
@@ -283,10 +202,12 @@ def analyze_chords(score: Score, key_info: dict, use_llm: bool = True) -> dict:
 
     # Tier 4: Batch Claude API call for remaining unknowns
     if unidentified_batch:
-        log.info("%d chords unidentified after tiers 1-3, trying Claude batch...", len(unidentified_batch))
-        claude_results = _batch_identify_with_claude(
-            unidentified_batch, detected or "unknown", use_llm=use_llm
-        )
+        claude_results = {}
+        if use_llm and chord_namer is not None:
+            log.info("%d chords unidentified after tiers 1-3, trying Claude batch...", len(unidentified_batch))
+            claude_results = chord_namer(
+                unidentified_batch, detected or "unknown"
+            )
 
         for entry in unidentified_batch:
             idx = entry["index"]
