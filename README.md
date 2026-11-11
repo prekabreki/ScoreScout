@@ -84,7 +84,7 @@ python cli.py score.mscz --export annotated.musicxml --annotations guided --octa
 
 Accepts `.mscz`, `.mscx`, `.musicxml`, `.mxl`, and `.xml`.
 
-`--annotations` profiles: `full` (every note), `guided` (selective), `clean` (chord labels only).
+`--annotations` profiles: `full` (every note), `guided` (selective), `clean` (no annotations, original engraving (plus the optional chord-reference page)).
 Add `--octaves` for octave numbers (C4 vs C), `--chord-guide` for the reference page, and
 `--text-guide` to append Claude's written guide to a PDF export.
 
