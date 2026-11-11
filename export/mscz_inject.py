@@ -305,6 +305,26 @@ def _collect_events(
     return parts
 
 
+def _free_verse_number(chord: ET.Element) -> int:
+    """Return the first lyric verse unused by ``chord`` (0-based).
+
+    MuseScore verse numbers are 0-based; a ``<Lyrics>`` without a ``<no>``
+    child means verse 0.
+    """
+    used = set()
+    for lyrics in chord.findall("Lyrics"):
+        no_el = lyrics.find("no")
+        try:
+            used.add(int(no_el.text) if no_el is not None and no_el.text else 0)
+        except (TypeError, ValueError):
+            used.add(0)
+
+    verse = 0
+    while verse in used:
+        verse += 1
+    return verse
+
+
 def _inject_labels(
     content_staves: list[ET.Element],
     profile: AnnotationProfile,
@@ -323,6 +343,10 @@ def _inject_labels(
             continue
 
         lyrics = ET.Element("Lyrics")
+        verse = _free_verse_number(ev.target)
+        if verse > 0:
+            no_el = ET.SubElement(lyrics, "no")
+            no_el.text = str(verse)
         text_el = ET.SubElement(lyrics, "text")
         text_el.text = label
 
