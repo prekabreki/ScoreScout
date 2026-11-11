@@ -263,7 +263,7 @@ def _collect_events(
                 # Treat the measure itself as a single voice
                 voices = [measure]
 
-            for voice in voices:
+            for voice_index, voice in enumerate(voices):
                 beat = 1.0  # beat position (1-indexed like music21)
                 # Nested tuplets are written as <Tuplet> ... <Tuplet> ... and
                 # closed innermost-first with <endTuplet/>; the stack multiplies
@@ -288,6 +288,7 @@ def _collect_events(
                         dur = _dur_quarters(elem, ratio)
                         events.append(PartEvent(
                             pitches, measure_num, beat, dur, target=elem,
+                            voice=voice_index,
                         ))
                         beat += dur
 
@@ -295,6 +296,7 @@ def _collect_events(
                         dur = _dur_quarters(elem, ratio)
                         events.append(PartEvent(
                             [], measure_num, beat, dur, is_rest=True,
+                            voice=voice_index,
                         ))
                         beat += dur
 

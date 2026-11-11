@@ -4,6 +4,8 @@ import logging
 
 from music21.stream import Score
 
+from analyzer.voices import voice_sequences
+
 log = logging.getLogger(__name__)
 
 # --- Difficulty scoring tunables -------------------------------------------
@@ -91,9 +93,9 @@ def analyze_difficulty(score: Score, rhythm_info: dict, stats_info: dict, key_in
                 max_span_semitones = max(max_span_semitones, span)
 
     # NOTE: span is read per Chord as-written (no cross-staff reach modelling, and
-    # for a single notated voice it mixes melody/bass). Refining this to compute
-    # span/jumps per voice is tracked separately; here we only ensure the score is
-    # well-formed and non-negative.
+    # for a single notated voice it mixes melody/bass). Per-voice span refinement
+    # is out of scope here; here we only ensure the score is well-formed and
+    # non-negative. (Jump distance is per voice — see section 5.)
     span_score = min(max(max_span_semitones - COMFORTABLE_SPAN_SEMITONES, SCORE_MIN), SCORE_MAX)
     scores["hand_span"] = span_score
 
@@ -133,16 +135,17 @@ def analyze_difficulty(score: Score, rhythm_info: dict, stats_info: dict, key_in
     ))
     scores["accidentals"] = acc_score
 
-    # 5. Jump distance — large position shifts
+    # 5. Jump distance — large position shifts, compared within one voice only
     jump_count = 0
     for part in score.parts:
-        prev_midi = None
-        for n in part.recurse().notes:
-            midi = n.pitch.midi if not n.isChord else n.pitches[0].midi
-            if prev_midi is not None:
-                if abs(midi - prev_midi) > OCTAVE_SEMITONES:  # more than an octave
-                    jump_count += 1
-            prev_midi = midi
+        for sequence in voice_sequences(part):
+            prev_midi = None
+            for n in sequence:
+                midi = n.pitch.midi if not n.isChord else n.pitches[0].midi
+                if prev_midi is not None:
+                    if abs(midi - prev_midi) > OCTAVE_SEMITONES:  # more than an octave
+                        jump_count += 1
+                prev_midi = midi
 
     jump_ratio = jump_count / max(total, 1)
     scores["jump_distance"] = max(SCORE_MIN, min(round(jump_ratio * JUMP_RATIO_SCALE), SCORE_MAX))
