@@ -7,6 +7,7 @@ from music21.stream import Score
 from music21 import interval
 
 from analyzer.spelling import display_name
+from analyzer.voices import voice_sequences
 
 log = logging.getLogger(__name__)
 
@@ -44,20 +45,21 @@ def analyze_stats(score: Score) -> dict:
         total_notes += len(notes)
         all_pitches.extend(pitches)
 
-        # Collect melodic intervals
-        prev = None
-        for n in notes:
-            if n.isChord:
-                curr = n.pitches[-1]  # top note
-            else:
-                curr = n.pitch
-            if prev:
-                try:
-                    iv = interval.Interval(prev, curr)
-                    intervals_list.append(iv.simpleName)
-                except Exception:
-                    pass
-            prev = curr
+        # Collect melodic intervals within each voice sequence
+        for sequence in voice_sequences(part):
+            prev = None
+            for n in sequence:
+                if n.isChord:
+                    curr = n.pitches[-1]  # top note
+                else:
+                    curr = n.pitch
+                if prev:
+                    try:
+                        iv = interval.Interval(prev, curr)
+                        intervals_list.append(iv.simpleName)
+                    except Exception:
+                        pass
+                prev = curr
 
     # Most common pitches
     pitch_counter = Counter(all_pitches)

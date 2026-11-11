@@ -26,6 +26,7 @@ from functools import lru_cache
 
 from music21 import key as m21key
 from music21 import pitch as m21pitch
+from music21 import stream as m21stream
 
 from analyzer.spelling import display_name
 
@@ -227,6 +228,7 @@ class PartEvent:
     quarter_length: float = 0.0
     is_rest: bool = False
     target: object = None
+    voice: object = None
 
 
 def _is_accidental_outside_key(pitch_obj, key_sharps: int) -> bool:
@@ -262,7 +264,7 @@ def _select_guided(parts: list[list[PartEvent]], key_sharps: int) -> list[PartEv
     total = 0
 
     for part in parts:
-        prev_midi = None
+        prev_midi_by_voice: dict = {}
         rest_beats = 0.0
         seen_accidentals: set[str] = set()  # pitch names already labeled (per part)
         note_index = 0
@@ -291,7 +293,8 @@ def _select_guided(parts: list[list[PartEvent]], key_sharps: int) -> list[PartEv
             if priority is None and rest_beats >= 2.0:
                 priority = 2
 
-            # Rule 4: Large interval jump (> 12th = 19 semitones)
+            # Rule 4: Large interval jump (> 12th = 19 semitones), within one voice
+            prev_midi = prev_midi_by_voice.get(ev.voice)
             if priority is None and prev_midi is not None and ev.pitches:
                 if abs(ev.pitches[0].midi - prev_midi) > 19:
                     priority = 4
@@ -301,7 +304,7 @@ def _select_guided(parts: list[list[PartEvent]], key_sharps: int) -> list[PartEv
 
             # Update state
             if ev.pitches:
-                prev_midi = ev.pitches[0].midi
+                prev_midi_by_voice[ev.voice] = ev.pitches[0].midi
             rest_beats = 0.0
             note_index += 1
 
@@ -332,23 +335,43 @@ def select_labels(parts: list[list[PartEvent]], profile, key_sharps: int = 0) ->
     return policy(parts)
 
 
+def _event_voice_key(note):
+    """Identify the logical voice a note belongs to, for per-voice comparisons.
+
+    Matches :func:`analyzer.voices._voice_key`: music21 nests one ``Voice`` per
+    measure, so separate objects that share an id are the same voice. Anonymous
+    voices fall back to object identity so they never merge.
+    """
+    voice = note.getContextByClass(m21stream.Voice)
+    if voice is None:
+        return None
+    voice_id = getattr(voice, "id", None)
+    if voice_id is not None and str(voice_id) != "":
+        return ("id", str(voice_id))
+    return ("object", id(voice))
+
+
 def events_from_music21(stream_obj) -> list[PartEvent]:
     """Flatten a music21 part/score into the shared :class:`PartEvent` stream.
 
     Rests are kept so the guided policy can see re-entries; notes and chords
     carry their sorted pitches as targets for the caller to attach lyrics to.
+    Each event also records its voice so the guided leap rule compares notes
+    within one voice only.
     """
     events: list[PartEvent] = []
     for n in stream_obj.recurse().notesAndRests:
         measure = n.measureNumber if n.measureNumber is not None else 0
         beat = float(n.beat) if n.beat else 1.0
+        voice = _event_voice_key(n)
         if n.isRest:
             events.append(PartEvent(
                 [], measure, beat, n.duration.quarterLength, is_rest=True,
+                voice=voice,
             ))
         else:
             events.append(PartEvent(
                 sorted(n.pitches, key=lambda p: p.midi), measure, beat,
-                n.duration.quarterLength, target=n,
+                n.duration.quarterLength, target=n, voice=voice,
             ))
     return events
