@@ -10,6 +10,8 @@ user's personal score library.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from music21 import stream, note, meter, tempo, chord as m21chord
 
@@ -57,6 +59,20 @@ def grand_staff_score() -> stream.Score:
     s.insert(0, treble)
     s.insert(0, bass)
     return s
+
+
+@pytest.fixture
+def musicxml_score_file(tmp_path) -> Path:
+    """Write a small melodic score to ``tmp_path`` as a real MusicXML file.
+
+    The web-route tests point ``app.LIBRARY_DIRS`` at ``tmp_path``, so this
+    gives every route a genuine parseable score to read.
+    """
+    s = stream.Score()
+    s.insert(0, _melody_part(["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"]))
+    path = tmp_path / "route_test_etude.musicxml"
+    s.write("musicxml", fp=str(path))
+    return path
 
 
 @pytest.fixture
