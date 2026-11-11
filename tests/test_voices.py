@@ -79,6 +79,51 @@ def test_single_voice_two_octave_leap_still_counts():
     assert "Large position jumps (octave+)" in diff["skills_required"]
 
 
+def _mixed_layout_score() -> stream.Score:
+    """Measure 1 has notes written directly (no Voice); measure 2 has two voices."""
+    score = stream.Score()
+    part = stream.Part()
+    part.append(meter.TimeSignature("4/4"))
+
+    m1 = stream.Measure(number=1)
+    for name in _MELODY:
+        m1.append(note.Note(name, quarterLength=1.0))
+    part.append(m1)
+
+    m2 = stream.Measure(number=2)
+    upper = stream.Voice(id="1")
+    lower = stream.Voice(id="2")
+    for name in _MELODY:
+        upper.append(note.Note(name, quarterLength=1.0))
+    for name in _BASS:
+        lower.append(note.Note(name, quarterLength=1.0))
+    m2.insert(0, upper)
+    m2.insert(0, lower)
+    part.append(m2)
+
+    score.insert(0, part)
+    return score
+
+
+def test_mixed_layout_direct_notes_join_voice_one():
+    """Direct notes join voice "1": 12 notes in exactly 2 sequences (#39)."""
+    part = _mixed_layout_score().parts[0]
+
+    sequences = voice_sequences(part)
+
+    assert len(sequences) == 2
+    assert sum(len(seq) for seq in sequences) == 12
+    # Direct notes (measure 1) + voice-"1" notes (measure 2) stay in time order.
+    assert [n.nameWithOctave for n in sequences[0]] == _MELODY + _MELODY
+    assert [n.nameWithOctave for n in sequences[1]] == _BASS
+
+    # _event_voice_key agrees: every note in the first sequence shares the key
+    # of a direct note, and the second sequence uses a different key.
+    direct_key = labeling._event_voice_key(part.recurse().notes[0])
+    assert all(labeling._event_voice_key(n) == direct_key for n in sequences[0])
+    assert all(labeling._event_voice_key(n) != direct_key for n in sequences[1])
+
+
 def test_guided_leap_rule_stays_within_one_voice():
     """The voice boundary is not a large leap, so it gets no guided label."""
     events = [

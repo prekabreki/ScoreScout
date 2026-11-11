@@ -340,11 +340,13 @@ def _event_voice_key(note):
 
     Matches :func:`analyzer.voices._voice_key`: music21 nests one ``Voice`` per
     measure, so separate objects that share an id are the same voice. Anonymous
-    voices fall back to object identity so they never merge.
+    voices fall back to object identity so they never merge. A note written
+    directly in a measure (no ``Voice``) joins voice "1", like
+    :func:`analyzer.voices.voice_sequences`.
     """
     voice = note.getContextByClass(m21stream.Voice)
     if voice is None:
-        return None
+        return ("id", "1")
     voice_id = getattr(voice, "id", None)
     if voice_id is not None and str(voice_id) != "":
         return ("id", str(voice_id))

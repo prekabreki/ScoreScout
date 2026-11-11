@@ -8,6 +8,8 @@ keeps each voice's notes together instead.
 
 from __future__ import annotations
 
+from music21 import stream
+
 
 def _voice_key(voice):
     """Group separate ``Voice`` objects that represent the same logical voice.
@@ -22,6 +24,17 @@ def _voice_key(voice):
     return ("object", id(voice))
 
 
+def _note_voice_key(note):
+    """The voice key for a note; a note written directly in a measure (no
+    ``Voice`` wrapper) belongs to the staff's voice 1, matching a ``Voice``
+    whose id is ``"1"``.
+    """
+    voice = note.getContextByClass(stream.Voice)
+    if voice is None:
+        return ("id", "1")
+    return _voice_key(voice)
+
+
 def _offset_in_part(note, part):
     try:
         return note.getOffsetInHierarchy(part)
@@ -33,25 +46,24 @@ def voice_sequences(part) -> list[list]:
     """Return each voice's notes/chords in time order.
 
     Voices nested inside measures (``Measure > Voice``) are included, unlike
-    ``part.voices`` alone. A part without any ``Voice`` streams is returned as a
-    single sequence.
+    ``part.voices`` alone. A part without any ``Voice`` streams is returned as
+    a single sequence, and notes written directly in a measure join voice "1".
     """
-    voices = list(part.recurse().voices)
-    if not voices:
-        return [list(part.recurse().notes)]
+    notes = list(part.recurse().notes)
+    if not notes:
+        return []
 
     grouped: dict = {}
     order = []
-    for voice in voices:
-        key = _voice_key(voice)
+    for n in notes:
+        key = _note_voice_key(n)
         if key not in grouped:
             grouped[key] = []
             order.append(key)
-        grouped[key].extend(voice.recurse().notes)
+        grouped[key].append(n)
 
     sequences = []
     for key in order:
-        notes = grouped[key]
-        notes.sort(key=lambda n: _offset_in_part(n, part))
-        sequences.append(notes)
+        grouped[key].sort(key=lambda n: _offset_in_part(n, part))
+        sequences.append(grouped[key])
     return sequences
