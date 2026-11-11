@@ -75,6 +75,10 @@ def analyze_rhythm(score: Score) -> dict:
         tempos = _compress_tempo_marks(tempos)
         log.debug("Tempo compression: %d -> %d entries", raw_count, len(tempos))
 
+    # Single source of truth for the piece's headline tempo. Consumers read
+    # this instead of re-scanning the tempo entries themselves.
+    primary_bpm = _first_usable_bpm(tempos)
+
     log.debug("Time sigs: %s | Tempos: %d entries | Syncopation: %s | Triplets: %s | Dotted: %s",
               time_sigs, len(tempos), has_syncopation, has_triplets, has_dotted)
 
@@ -82,6 +86,7 @@ def analyze_rhythm(score: Score) -> dict:
         "time_signatures": time_sigs if time_sigs else [{"signature": "4/4", "measure": 1}],
         "time_signature_changes": time_sig_changes,
         "tempos": tempos,
+        "primary_bpm": primary_bpm,
         "estimated_duration_seconds": duration_seconds,
         "rhythmic_features": {
             "has_syncopation": has_syncopation,
@@ -93,11 +98,15 @@ def analyze_rhythm(score: Score) -> dict:
 
 
 def _first_usable_bpm(tempos: list[dict]) -> float | None:
-    """First positive BPM among tempo entries (handles range-shaped dicts too)."""
+    """First positive BPM among tempo entries (handles range-shaped dicts too).
+
+    The one place that scans tempo entries for a usable BPM; callers consume
+    the resulting ``primary_bpm`` instead of re-implementing this scan.
+    """
     for entry in tempos:
         bpm = entry.get("bpm") or entry.get("from_bpm")
         if bpm and bpm > 0:
-            return bpm
+            return float(bpm)
     return None
 
 

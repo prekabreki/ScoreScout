@@ -74,6 +74,5 @@ def generate_annotations(score: Score) -> dict:
     log.debug("Generated %d detailed entries, %d simplified lines", len(detailed), len(simplified))
 
     return {
-        "detailed": detailed[:200],  # limit for large scores
         "simplified": simplified,
     }

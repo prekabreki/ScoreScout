@@ -72,15 +72,10 @@ def _format_duration(seconds) -> str:
     return f"{mins}:{secs:02d}"
 
 
-def _format_tempo(tempos: list) -> str:
-    if not tempos:
+def _format_tempo(primary_bpm) -> str:
+    if not primary_bpm:
         return "N/A"
-    first = tempos[0]
-    if first.get("bpm"):
-        return f'{first["bpm"]} BPM'
-    if first.get("from_bpm"):
-        return f'{first["from_bpm"]} BPM'
-    return "N/A"
+    return f"{primary_bpm:g} BPM"
 
 
 def _format_time_signature(ts_list: list) -> str:
@@ -110,7 +105,7 @@ def build_report_model(analysis: dict) -> ReportModel:
     simplified = annotations.get("simplified", [])
     note_map = simplified[:MAX_NOTE_MAP_LINES]
 
-    tempo = _format_tempo(rhythm.get("tempos", []))
+    tempo = _format_tempo(rhythm.get("primary_bpm"))
     duration = _format_duration(rhythm.get("estimated_duration_seconds"))
 
     return ReportModel(

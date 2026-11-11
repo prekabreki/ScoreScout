@@ -400,8 +400,8 @@ def _get_top_chords(chord_info: dict, max_chords: int = 12) -> list[tuple[str, i
     progression = chord_info.get("chord_progression_full", [])
     counts: Counter = Counter()
     for entry in progression:
-        name = entry.get("name", "")
-        if not name or name.startswith("["):
+        name = entry.get("name")
+        if not name:
             continue
         simple = _simplify_chord_name(name)
         if simple and _is_usable_chord_name(simple):

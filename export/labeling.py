@@ -60,7 +60,7 @@ _ADD_NOTE_RE = re.compile(r'add[A-G]', re.IGNORECASE)
 
 def _is_usable_chord_name(name: str) -> bool:
     """Check if a chord name is short and beginner-friendly."""
-    if not name or name.startswith("["):
+    if not name:
         return False
     # Too long — no beginner chord name exceeds ~8 chars (e.g. "Cmaj7b5")
     if len(name) > 8:

@@ -100,17 +100,9 @@ def analyze_difficulty(score: Score, rhythm_info: dict, stats_info: dict, key_in
     scores["hand_span"] = span_score
 
     # 3. Tempo x density
-    bpm = DEFAULT_BPM
-    tempos = rhythm_info.get("tempos", [])
-    # rhythm_analysis._compress_tempo_marks can turn entries into range dicts
-    # (accel/rit) that carry "from_bpm"/"to_bpm" instead of "bpm". Scan for the
-    # first entry that exposes a usable tempo under either shape so we don't
-    # silently fall back to DEFAULT_BPM when tempo[0] happens to be a range.
-    for entry in tempos:
-        candidate = entry.get("bpm") or entry.get("from_bpm")
-        if candidate:
-            bpm = candidate
-            break
+    # ``analyze_rhythm`` computes the headline tempo once (including compressed
+    # accel/rit ranges); fall back to the default only when it is absent.
+    bpm = rhythm_info.get("primary_bpm") or DEFAULT_BPM
     density = stats_info.get("notes_per_measure", DEFAULT_DENSITY)
     tempo_density = (bpm / REFERENCE_BPM) * (density / REFERENCE_DENSITY)  # normalized
     scores["tempo_density"] = max(SCORE_MIN, min(round(tempo_density * TEMPO_DENSITY_SCALE), SCORE_MAX))

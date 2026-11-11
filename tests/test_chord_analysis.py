@@ -96,6 +96,25 @@ def test_analyze_chords_excludes_verbose_interval_names():
         assert " above " not in entry["name"]
 
 
+def test_unidentified_chord_uses_pitch_label_not_sentinel_name():
+    """An unidentified chord carries name=None and its pitch label separately,
+    and is excluded from the chord summaries."""
+    s = stream.Score()
+    part = stream.Part()
+    part.append(m21chord.Chord(["C4", "C#4", "D4", "D#4", "E4"], quarterLength=1.0))
+    s.insert(0, part)
+
+    result = analyze_chords(s, {"detected_key": None}, use_llm=False)
+
+    entry = result["chord_progression_full"][0]
+    assert entry["name"] is None
+    assert entry["pitch_label"] == "[C C# D Eb E]"
+    assert result["unique_chords"] == []
+    assert result["most_common_chords"] == []
+    # Tier-5 label is still surfaced for complex chords.
+    assert result["complex_chords"][0]["name"] == entry["pitch_label"]
+
+
 @pytest.mark.parametrize(
     "pitches, expected",
     [

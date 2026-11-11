@@ -34,31 +34,40 @@ def test_m1_path_within_rejects_sibling_dir(tmp_path):
 
 # --- M2: difficulty tolerates range-shaped tempo entries -------------------
 
-def test_m2_difficulty_reads_range_shaped_tempo(grand_staff_score):
-    """A compressed accel/rit entry exposes from_bpm (no 'bpm'); difficulty must
-    pick up a real BPM from it instead of silently falling back to DEFAULT_BPM."""
+def test_m2_difficulty_reads_primary_bpm(grand_staff_score):
+    """Difficulty reads the one headline tempo from ``analyze_rhythm`` instead
+    of re-scanning tempo entries (including compressed accel/rit ranges)."""
     rhythm = analyze_rhythm(grand_staff_score)
     stats = analyze_stats(grand_staff_score)
     key = analyze_key(grand_staff_score)
 
-    # Force a range-shaped first tempo (what _compress_tempo_marks emits).
-    rhythm["tempos"] = [
-        {"type": "accel", "from_bpm": 200, "to_bpm": 260,
-         "from_measure": 1, "to_measure": 5},
-    ]
+    # A compressed accel/rit range yields a primary BPM from its first usable
+    # value (what _first_usable_bpm emits).
+    rhythm["primary_bpm"] = 200.0
     diff = analyze_difficulty(grand_staff_score, rhythm, stats, key)
     # With bpm=200 (>> DEFAULT_BPM 120) tempo_density should be at its max.
     assert diff["component_scores"]["tempo_density"] >= 1
 
-    # Compare against the DEFAULT_BPM fallback: an empty tempo list must score
-    # strictly lower, proving the range dict was actually read.
+    # Compare against the DEFAULT_BPM fallback: a missing primary BPM must
+    # score strictly lower, proving the value was actually read.
     rhythm_default = dict(rhythm)
-    rhythm_default["tempos"] = []
+    rhythm_default["primary_bpm"] = None
     diff_default = analyze_difficulty(grand_staff_score, rhythm_default, stats, key)
-    # 200 BPM (read from from_bpm) must score strictly above the 120 fallback,
-    # which only holds if the range dict was actually parsed.
     assert diff["component_scores"]["tempo_density"] > diff_default["component_scores"]["tempo_density"]
     assert DEFAULT_BPM == 120  # guard the assumption above
+
+
+def test_analyze_rhythm_exposes_primary_bpm():
+    """The headline BPM is computed once in analyze_rhythm for all consumers."""
+    p = stream.Part()
+    p.append(meter.TimeSignature("4/4"))
+    p.append(tempo.MetronomeMark(number=90))
+    for _ in range(4):
+        p.append(note.Note("C4", quarterLength=1.0))
+    s = stream.Score()
+    s.insert(0, p)
+
+    assert analyze_rhythm(s)["primary_bpm"] == 90.0
 
 
 # --- M7: accidental-outside-key detection actually discriminates -----------
