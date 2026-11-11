@@ -6,6 +6,8 @@ from collections import Counter
 from music21.stream import Score
 from music21 import interval
 
+from analyzer.spelling import display_name
+
 log = logging.getLogger(__name__)
 
 
@@ -24,9 +26,9 @@ def analyze_stats(score: Score) -> dict:
         pitches = []
         for n in notes:
             if n.isChord:
-                pitches.extend([str(p) for p in n.pitches])
+                pitches.extend([display_name(str(p)) for p in n.pitches])
             else:
-                pitches.append(str(n.pitch))
+                pitches.append(display_name(str(n.pitch)))
 
         lowest = min((p.midi for n in notes for p in (n.pitches if n.isChord else [n.pitch])), default=None)
         highest = max((p.midi for n in notes for p in (n.pitches if n.isChord else [n.pitch])), default=None)
@@ -36,8 +38,8 @@ def analyze_stats(score: Score) -> dict:
             "part_index": i,
             "part_name": part.partName or f"Part {i+1}",
             "note_count": len(notes),
-            "lowest_note": m21pitch.Pitch(midi=lowest).nameWithOctave if lowest is not None else None,
-            "highest_note": m21pitch.Pitch(midi=highest).nameWithOctave if highest is not None else None,
+            "lowest_note": display_name(m21pitch.Pitch(midi=lowest).nameWithOctave) if lowest is not None else None,
+            "highest_note": display_name(m21pitch.Pitch(midi=highest).nameWithOctave) if highest is not None else None,
         })
         total_notes += len(notes)
         all_pitches.extend(pitches)

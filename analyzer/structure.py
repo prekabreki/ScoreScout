@@ -5,6 +5,8 @@ import logging
 from music21.stream import Score
 from music21.analysis.discrete import KrumhanslSchmuckler
 
+from analyzer.spelling import display_name
+
 log = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ def analyze_structure(score: Score) -> dict:
         excerpt = score.measures(start + 1, end)
         try:
             result = ks_analyzer.getSolution(excerpt)
-            current_key = str(result) if result else None
+            current_key = display_name(str(result)) if result else None
         except Exception as exc:
             log.debug("Key analysis failed for window m.%d-%d: %s", start + 1, end, exc)
             current_key = None

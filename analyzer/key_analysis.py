@@ -5,6 +5,8 @@ import logging
 from music21.stream import Score
 from music21.analysis.discrete import KrumhanslSchmuckler
 
+from analyzer.spelling import display_name
+
 log = logging.getLogger(__name__)
 
 
@@ -50,7 +52,7 @@ def analyze_key(score: Score) -> dict:
     ks_analyzer = KrumhanslSchmuckler()
     result = ks_analyzer.getSolution(score)
 
-    algo_key = str(result) if result else None
+    algo_key = display_name(str(result)) if result else None
     algo_mode = result.mode if result else None
 
     # Explicit key signature from score.
@@ -75,7 +77,7 @@ def analyze_key(score: Score) -> dict:
         # Describe using the first signature that matches the winning sharp count.
         for ks in all_sigs:
             if ks.sharps == explicit_sharps and hasattr(ks, "asKey"):
-                explicit_key = str(ks.asKey())
+                explicit_key = display_name(str(ks.asKey()))
                 break
 
     # Build accidentals list

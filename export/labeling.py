@@ -27,26 +27,22 @@ from functools import lru_cache
 from music21 import key as m21key
 from music21 import pitch as m21pitch
 
+from analyzer.spelling import display_name
+
 
 # ---------------------------------------------------------------------------
 # Label text
 # ---------------------------------------------------------------------------
 
-def _fix_flats(text: str) -> str:
-    """Convert music21's flat notation to beginner-friendly: B- -> Bb, A-- -> Abb."""
-    text = text.replace('--', 'bb')
-    return re.sub(r'([A-G])-(?=[^a-zA-Z]|$)', r'\1b', text)
-
-
 def _note_name(pitch_obj, octaves: bool) -> str:
-    return _fix_flats(pitch_obj.nameWithOctave if octaves else pitch_obj.name)
+    return display_name(pitch_obj.nameWithOctave if octaves else pitch_obj.name)
 
 
 def _simplify_chord_name(symbol: str) -> str:
     """Strip inversions for beginner readability: 'Bm7/D' -> 'Bm7'."""
     if not symbol:
         return symbol
-    return _fix_flats(symbol.split("/")[0])
+    return display_name(symbol.split("/")[0])
 
 
 # Words that signal music21 internal classification, not a usable chord name
@@ -94,7 +90,7 @@ def _lookup_chord_name(chord_info: dict | None, measure, beat) -> str | None:
             name = entry.get("name", "")
             simplified = _simplify_chord_name(name) if name else ""
             if simplified and _is_usable_chord_name(simplified):
-                return _fix_flats(simplified)
+                return display_name(simplified)
     return None
 
 
