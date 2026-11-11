@@ -230,8 +230,8 @@ def _inject_guided_chord_symbols(score: Score, chord_info: dict) -> None:
     count = 0
 
     for entry in progression:
-        name = entry.get("name", "")
-        if not name or name.startswith("["):
+        name = entry.get("name")
+        if not name:
             continue
 
         simple = _simplify_chord_name(name)

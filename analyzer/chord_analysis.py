@@ -168,18 +168,19 @@ def analyze_chords(
     for ch in chords:
         pcs = _normalize_to_pitch_classes(ch)
         name, rn_fig, tier = _identify_chord_tiered(ch, pcs, key_obj)
+        pitch_label = _pitch_classes_to_label(pcs)
+        identified = tier != "unidentified"
 
-        if tier == "unidentified":
+        if not identified:
             # Collect for Tier 4 batch
-            label = _pitch_classes_to_label(pcs)
             unidentified_batch.append({
-                "pitch_classes_label": label,
+                "pitch_classes_label": pitch_label,
                 "pitches": [str(p) for p in ch.pitches],
                 "measure": ch.measureNumber,
                 "beat": float(ch.beat) if ch.beat else 1.0,
                 "index": len(chord_names),  # to patch back later
             })
-            chord_names.append(label)  # placeholder
+            chord_names.append(None)  # unidentified; Tier 4 may fill this in
             roman_numerals.append(rn_fig)
         else:
             tier_counts[tier] += 1
@@ -187,7 +188,8 @@ def analyze_chords(
             roman_numerals.append(rn_fig)
 
         chord_progression.append({
-            "name": name if tier != "unidentified" else "",
+            "name": name if identified else None,
+            "pitch_label": pitch_label,
             "measure": ch.measureNumber,
             "beat": float(ch.beat) if ch.beat else 1.0,
             "pitches": [str(p) for p in ch.pitches],
@@ -195,7 +197,7 @@ def analyze_chords(
 
         if len(ch.pitches) > 4:
             complex_chords.append({
-                "name": name if tier != "unidentified" else _pitch_classes_to_label(pcs),
+                "name": name if identified else pitch_label,
                 "measure": ch.measureNumber,
                 "num_notes": len(ch.pitches),
             })
@@ -220,17 +222,17 @@ def analyze_chords(
                 chord_progression[idx]["name"] = claude_name
                 tier_counts["claude"] += 1
             else:
-                # Tier 5: keep the pitch class label
-                chord_progression[idx]["name"] = label
+                # Tier 5: name stays None; pitch_label carries the pitch-class
+                # label for unidentified chords.
                 tier_counts["fallback"] += 1
 
-    # Summary stats — exclude Tier-5 bracket placeholders (e.g. "[C E G#]"),
-    # which are pitch-class labels for unidentified chords, not real chord names,
-    # and any residual verbose interval prose (e.g. "Perfect Octave above D").
+    # Summary stats — unidentified chords have name None (their pitch labels
+    # live in ``pitch_label``), so exclude them along with any residual verbose
+    # interval prose (e.g. "Perfect Octave above D").
     named_chords = [
         n
         for n in chord_names
-        if n and not n.startswith("[") and not _is_verbose_interval_name(n)
+        if n and not _is_verbose_interval_name(n)
     ]
     counter = Counter(named_chords)
     most_common = [{"name": n, "count": c} for n, c in counter.most_common(15)]

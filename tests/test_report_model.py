@@ -34,6 +34,7 @@ def _analysis(n_chords=15, n_notes=70, n_dynamics=30):
         "rhythm": {
             "time_signatures": [{"signature": "3/4"}],
             "tempos": [{"bpm": 120}],
+            "primary_bpm": 120,
             "estimated_duration_seconds": 90,
         },
         "key": {"detected_key": "C major"},
@@ -123,8 +124,13 @@ def test_tempo_and_duration_formatting():
     assert model.has_duration is True
 
     ranged = _analysis()
-    ranged["rhythm"]["tempos"] = [{"from_bpm": 200}]
+    ranged["rhythm"]["primary_bpm"] = 200
     assert build_report_model(ranged).tempo == "200 BPM"
+
+    # Old disk-cache entries have no primary_bpm; treat it as absent.
+    legacy = _analysis()
+    legacy["rhythm"].pop("primary_bpm")
+    assert build_report_model(legacy).tempo == "N/A"
 
 
 # --- both renderers show the same data ------------------------------------
