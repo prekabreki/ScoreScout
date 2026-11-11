@@ -67,9 +67,9 @@ def export_annotated(
     """Annotate ``score`` and export it in ``fmt`` to ``out_path``.
 
     ``source_path`` is the original score file, if known: a ``.mscz`` PDF export
-    uses direct XML injection to preserve layout (unless the ``clean`` profile
-    is requested, which skips annotation entirely). Otherwise the score is
-    annotated through music21.
+    always goes through direct XML injection to preserve layout; the ``clean``
+    profile then copies the source untouched. Otherwise the score is annotated
+    through music21.
 
     ``include_chord_guide`` / ``include_text_guide`` append extra pages to a
     PDF. A text guide reuses ``explanation`` when provided; otherwise it is
@@ -92,7 +92,7 @@ def export_annotated(
     annotated = None
     try:
         if effective_fmt == "pdf":
-            if is_mscz and profile_name != "clean":
+            if is_mscz:
                 log.info("Using .mscz injection path for %s", Path(source_path).name)
                 export_pdf_from_mscz(
                     source_path, out_path,
